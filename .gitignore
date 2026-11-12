@@ -1,0 +1,16 @@
+node_modules/
+
+# Built by installer/make-release.ps1 - generated, never committed.
+installer/payload/
+installer/*.zip
+installer/version.json
+
+# The video editor (editor/, made from OpenCut): its parts and what it builds, made on install.
+editor/node_modules/
+editor/.next/
+editor/out/
+editor/next-env.d.ts
+editor/tsconfig.tsbuildinfo
+
+# Local installs and test links (a symlink is not matched by "node_modules/").
+node_modules

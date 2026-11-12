@@ -1,0 +1,11 @@
+#!/bin/sh
+# The shell in a room terminal tab. Herdr was started with its own settings
+# folder (see herdr-tabs.toml); this takes that back out, so programs in the
+# tab see the room's normal settings.
+unset XDG_CONFIG_HOME
+/bin/bash "$@"
+status=$?
+# The shell ended (exit, or Ctrl+D), so the tab ends too. Herdr would otherwise
+# start a fresh shell in its place. HERDR_SOCKET_PATH says which session this is.
+/home/dev/.local/bin/herdr server stop >/dev/null 2>&1
+exit "$status"

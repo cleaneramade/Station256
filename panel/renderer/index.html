@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' house-file: data:; media-src house-file:; frame-src station-editor: house-file:">
+  <title>Station 256</title>
+  <link rel="stylesheet" href="../node_modules/@xterm/xterm/css/xterm.css">
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="splash-logo.css">
+  <script src="again.js"></script>
+</head>
+<body>
+  <!-- Every icon the page may use in code, so the setup script copies them. -->
+  <div hidden>
+    <i data-i="desktop"></i><i data-i="document"></i><i data-i="folder_add"></i><i data-i="window_console"></i><i data-i="lock_open-filled"></i>
+    <i data-i="fire-filled"></i><i data-i="arrow_trending_down-filled"></i><i data-i="arrow_trending-filled"></i><i data-i="document_edit-filled"></i><i data-i="play-filled"></i>
+    <i data-i="play"></i><i data-i="checkbox_unchecked"></i><i data-i="folder_open"></i><i data-i="document_arrow_down"></i>
+    <i data-i="checkmark"></i><i data-i="dismiss"></i>
+    <i data-i="chevron_down"></i><i data-i="video"></i>
+    <i data-i="music_note_2"></i><i data-i="image"></i><i data-i="eye"></i><i data-i="briefcase"></i>
+    <i data-i="panel_left_contract"></i><i data-i="square"></i><i data-i="grid"></i>
+    <i data-i="square_multiple"></i><i data-i="grid_dots"></i><i data-i="text_bullet_list"></i><i data-i="apps_list"></i><i data-i="content_view"></i>
+    <i data-i="arrow_undo"></i><i data-i="info"></i><i data-i="link"></i><i data-i="document_add"></i><i data-i="tab_add"></i>
+    <i data-i="select_all_on"></i><i data-i="select_all_off"></i><i data-i="checkbox_checked"></i><i data-i="arrow_download-filled"></i>
+    <i data-i="timer"></i><i data-i="flash"></i><i data-i="text_font"></i><i data-i="calendar_ltr"></i><i data-i="bot"></i><i data-i="table"></i><i data-i="key"></i><i data-i="tag"></i><i data-i="data_bar_vertical"></i><i data-i="arrow_sort_up"></i><i data-i="arrow_sort_down"></i><i data-i="folder_zip"></i><i data-i="archive"></i><i data-i="open"></i><i data-i="panel_right_contract"></i><i data-i="document_one_page"></i><i data-i="weather_moon"></i><i data-i="warning"></i><i data-i="chevron_right"></i><i data-i="chevron_up"></i><i data-i="lock_closed-filled"></i>
+  </div>
+
+  <template id="tab-template">
+    <div class="tab">
+      <img class="folder tab-folder" src="folder.svg" alt="">
+      <i class="tab-term-icon" data-i="window_console"></i>
+      <span class="tab-title"></span>
+      <button class="tab-btn popout" title="Move to its own window"><i data-i="window_new"></i></button>
+      <button class="tab-btn bring-back" title="Move back to the main window" hidden><i data-i="panel_left_contract"></i></button>
+      <button class="tab-btn close-tab" title="Close tab"><i data-i="dismiss"></i></button>
+    </div>
+  </template>
+
+  <div class="app">
+    <header class="tabstrip">
+      <div class="tabs" id="tabs">
+        <button class="new-tab" id="new-tab" title="New tab"><i data-i="add"></i></button>
+      </div>
+      <div class="drag-space"></div>
+      <div class="window-controls">
+        <button id="win-min" title="Minimize"><i data-i="subtract"></i></button>
+        <button id="win-max" title="Maximize"><i id="win-max-icon" data-i="maximize"></i></button>
+        <button id="win-close" class="close" title="Close"><i data-i="dismiss"></i></button>
+      </div>
+    </header>
+
+    <div class="addressbar">
+      <button class="tool" id="back" title="Back"><i data-i="arrow_left"></i></button>
+      <button class="tool" id="forward" title="Forward"><i data-i="arrow_right"></i></button>
+      <button class="tool" id="up" title="Up"><i data-i="arrow_up"></i></button>
+      <button class="tool" id="refresh" title="Refresh"><i data-i="arrow_clockwise"></i></button>
+      <div class="address" id="address"></div>
+      <label class="search">
+        <input id="search" type="text" spellcheck="false" placeholder="Search">
+        <button type="button" class="search-scope" id="search-scope" title="Search options"><i data-i="chevron_down"></i></button>
+        <i data-i="search"></i>
+      </label>
+    </div>
+
+    <div class="commandbar">
+      <button class="cmd" id="new-btn"><i data-i="add_circle"></i><span>New</span><i class="caret" data-i="chevron_down"></i></button>
+      <span class="divider"></span>
+      <button class="tool" id="cut" title="Cut (Ctrl+X)"><i data-i="cut"></i></button>
+      <button class="tool" id="copy" title="Copy (Ctrl+C)"><i data-i="copy"></i></button>
+      <button class="tool" id="paste" title="Paste (Ctrl+V)"><i data-i="clipboard_paste"></i></button>
+      <button class="tool" id="rename" title="Rename (F2)"><i data-i="rename"></i></button>
+      <button class="tool" id="delete" title="Delete"><i data-i="delete"></i></button>
+      <span class="divider"></span>
+      <button class="cmd" id="sort-btn"><i class="tint-blue" data-i="arrow_sort"></i><span>Sort</span><i class="caret" data-i="chevron_down"></i></button>
+      <button class="cmd" id="view-btn" title="Change how files are shown"><i id="view-btn-icon" data-i="list"></i><span id="view-btn-label">Details</span><i class="caret" data-i="chevron_down"></i></button>
+      <span class="divider"></span>
+      <button class="cmd" id="room-btn" hidden><i class="tint-green" id="room-btn-icon" data-i="play"></i><span id="room-btn-label">Open Room</span></button>
+      <button class="cmd preview-btn" id="room-preview-btn" hidden><i class="tint-blue" data-i="open"></i><span id="room-preview-label">Preview</span></button>
+      <button class="cmd" id="room-new-btn" title="Open another terminal in this room" hidden><i class="tint-blue" data-i="window_console"></i><span>New Room</span></button>
+      <button class="cmd" id="room-close-btn" title="Close every room in this project" hidden><i class="tint-red" data-i="checkbox_unchecked"></i><span id="room-close-label">Close All Rooms</span></button>
+      <button class="cmd" id="trash-restore" title="Put back where it came from" hidden><i class="tint-blue" data-i="arrow_left"></i><span>Restore</span></button>
+      <button class="cmd" id="trash-empty" title="Delete everything in the Trash forever" hidden><i class="tint-red" data-i="delete"></i><span>Empty Trash</span></button>
+      <div class="grow"></div>
+      <button class="cmd" id="copy-mini" hidden>
+        <svg class="copy-ring" viewBox="0 0 20 20" aria-hidden="true"><circle class="copy-ring-track" cx="10" cy="10" r="8"/><circle class="copy-ring-fill" id="copy-ring-fill" cx="10" cy="10" r="8" pathLength="100"/></svg>
+        <span id="copy-mini-text">0%</span>
+      </button>
+      <button class="cmd" id="lock-btn" title="AI access to your Windows files">
+        <i class="tint-blue" id="lock-icon" data-i="lock_closed-filled"></i><span id="lock-label">Locked</span>
+      </button>
+      <button class="cmd" id="rules-btn" title="House rules"><i class="tint-blue" data-i="shield"></i><span>Rules</span></button>
+      <button class="cmd" id="schedules-btn" title="Tasks that run on a repeat"><i class="tint-blue" data-i="calendar_ltr"></i><span>Schedules</span></button>
+      <button class="cmd" id="toggle-system" title="System panel"><i class="tint-blue" data-i="panel_right"></i><span>System</span></button>
+    </div>
+
+    <div class="main">
+      <nav class="navpane" id="nav" data-tip-side="right">
+        <button class="nav-toggle" id="nav-toggle"><i class="tint-blue" data-i="panel_right"></i></button>
+        <button class="nav-item" data-nav="home"><i class="tint-orange" data-i="home-filled"></i><span>Home</span></button>
+        <div class="nav-rule"></div>
+        <button class="nav-item" data-nav="projects"><img class="folder" src="folder.svg" alt=""><span>Projects</span><i class="pin" data-i="pin"></i></button>
+        <button class="nav-item" data-nav="Documents"><i class="tint-blue" data-i="document-filled"></i><span>Documents</span><i class="pin" data-i="pin"></i></button>
+        <button class="nav-item" data-nav="Pictures"><i class="tint-blue" data-i="image-filled"></i><span>Pictures</span><i class="pin" data-i="pin"></i></button>
+        <button class="nav-item" data-nav="Music"><i class="tint-orange" data-i="music_note_2-filled"></i><span>Music</span><i class="pin" data-i="pin"></i></button>
+        <button class="nav-item" data-nav="Videos"><i class="tint-purple" data-i="video-filled"></i><span>Videos</span><i class="pin" data-i="pin"></i></button>
+        <button class="nav-item" data-nav="Downloads"><i class="tint-green" data-i="arrow_download-filled"></i><span>Downloads</span><i class="pin" data-i="pin"></i></button>
+        <div class="nav-rule"></div>
+        <button class="nav-item" data-nav="root"><i class="expander" data-i="chevron_right"></i><i class="tint-gray" data-i="hard_drive"></i><span>Linux House (L:)</span></button>
+        <!-- Windows' own C: drive, only while the Windows lock is open. View and copy only. -->
+        <button class="nav-item" data-nav="windows" id="nav-windows" hidden><i class="expander" data-i="chevron_right"></i><i class="tint-gray" data-i="hard_drive"></i><span>Windows (C:)</span></button>
+        <!-- Only Trash sits at the bottom of the sidebar when there's room, and scrolls with the rest when not. -->
+        <div class="nav-bottom">
+          <div class="nav-rule"></div>
+          <button class="nav-item" data-nav="trash"><i class="tint-gray" data-i="delete"></i><span>Trash</span></button>
+        </div>
+      </nav>
+      <div class="nav-grip" id="nav-grip"></div>
+
+      <section class="content" id="files-view">
+        <div class="columns row-grid" id="columns">
+          <button data-sort="name" class="col-name"><span class="check head-check" id="check-all" title="Select all"><i data-i="checkmark"></i></span><span class="col-label">Name</span><i class="sort-mark" id="sort-mark" data-i="chevron_up"></i></button>
+          <button data-sort="mtime"><span class="col-label">Date modified</span></button>
+          <button data-sort="editor" title="Which AI last changed it"><span class="col-label">Last edited by</span></button>
+          <button data-sort="reader" title="Which AI last read it"><span class="col-label">Last read by</span></button>
+          <button data-sort="tokens" title="Tokens used by AI steps that read or changed it"><span class="col-label">Tokens</span></button>
+          <button data-sort="type"><span class="col-label">Type</span></button>
+          <button data-sort="size"><span class="col-label">Size</span></button>
+          <div class="col-drop" id="col-drop" hidden></div>
+        </div>
+        <div class="rows" id="rows" tabindex="0"></div>
+        <div class="gh-bar" id="gh-bar" hidden></div>
+        <div class="home-view" id="home-view" hidden></div>
+      </section>
+
+      <section class="term-area" id="term-area" hidden></section>
+
+      <section class="agents-view" id="agents-view" hidden></section>
+
+      <section class="rules-view" id="rules-view" tabindex="-1" hidden></section>
+
+      <section class="llama-view" id="llama-view" hidden></section>
+
+      <!-- Files opened in a page of their own (doc-tab.js): one editor per tab. -->
+      <section class="doc-area" id="doc-area" hidden></section>
+
+      <aside class="systempane" id="system-pane" hidden></aside>
+
+      <!-- The status bar sits under the page only: the sidebar runs down past it to the bottom. -->
+      <footer class="statusbar">
+        <span id="item-count"></span>
+        <button class="house-note" id="house-note"></button>
+        <div class="grow"></div>
+        <div class="zoom">
+          <button class="status-btn" id="zoom-out" title="Zoom out (Ctrl -)"><i data-i="subtract"></i></button>
+          <button class="zoom-level" id="zoom-level" title="Back to 100% (Ctrl 0)">100%</button>
+          <button class="status-btn" id="zoom-in" title="Zoom in (Ctrl +)"><i data-i="add"></i></button>
+        </div>
+        <button class="status-btn view" id="view-details" title="Details"><i data-i="list"></i></button>
+        <button class="status-btn view" id="view-icons" title="Large icons"><i data-i="square"></i></button>
+      </footer>
+    </div>
+    <div class="preview" id="preview" hidden></div>
+    <!-- Loading screen: logo and one ring. The ring grows and fades when the files are ready. -->
+    <div class="splash" id="splash">
+      <div class="splash-badge">
+        <span class="splash-glow"></span>
+        <span class="splash-ring"><span class="splash-arc"></span></span>
+        <img class="splash-logo" src="station-256.png" alt="Station 256">
+      </div>
+    </div>
+  </div>
+
+  <div class="menu" id="menu" hidden></div>
+  <dialog class="dialog" id="dialog"></dialog>
+
+  <script src="../node_modules/@xterm/xterm/lib/xterm.js"></script>
+  <script src="../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+  <script src="../node_modules/@xterm/addon-unicode11/lib/addon-unicode11.js"></script>
+  <script src="tooltip.js"></script>
+  <script src="term.js"></script>
+  <script src="window-motion.js"></script>
+  <script src="app.js"></script>
+  <script src="docx-view.js"></script>
+  <script src="preview.js"></script>
+  <script src="search.js"></script>
+  <script src="keys.js"></script>
+  <script src="doc-tab.js"></script>
+  <script src="picture-editor.js"></script>
+  <script src="video-tab.js"></script>
+  <script src="music-info.js"></script>
+  <script src="editor-tab.js"></script>
+  <script src="llama-tab.js"></script>
+  <script src="github-ui.js"></script>
+  <script src="schedules-tab.js"></script>
+  <script src="obscura-tab.js"></script>
+</body>
+</html>

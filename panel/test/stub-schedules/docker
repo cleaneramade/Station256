@@ -1,0 +1,23 @@
+#!/bin/bash
+# A stand-in for docker in the Schedules picture run (SHOT_PATH=panel/test/stub-schedules). Only a
+# room's state and an "exec" are answered; everything else is refused, so no real room is reached.
+# The room is "up" while $HOME/sched-fake/up exists. $HOME/sched-fake/mode picks what an exec does:
+# quick (prints and ends), slow (ends after 3 seconds), hang (never ends). Each exec's pid is
+# written to $HOME/sched-fake/last.pid and its arguments added to exec.log.
+F="$HOME/sched-fake"
+case "$1" in
+  ps) [ -e "$F/up" ] && echo "room-SampleApp"; exit 0 ;;
+  top) echo "PID TT COMMAND"; echo "1 ? /sbin/docker-init -- /home/dev/room-start"; echo "7 ? sleep infinity"; exit 0 ;;
+  exec)
+    echo "$$ $*" >> "$F/exec.log"
+    echo "$$" > "$F/last.pid"
+    case "$*" in *" -i "*) cat > "$F/stdin.txt" ;; esac
+    case "$(cat "$F/mode" 2>/dev/null)" in
+      hang) exec sleep 600 ;;
+      slow) echo "working..."; sleep 3 ;;
+      *) echo "All 42 tests passed" ;;
+    esac
+    exit 0 ;;
+esac
+echo "refused: docker $1" >&2
+exit 1

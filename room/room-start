@@ -1,0 +1,54 @@
+#!/bin/sh
+# What a room runs. Hands its own settings to ssh sessions, opens the ssh door,
+# then idles. An ssh session gets none of the container's settings by itself,
+# which is why they are written out here.
+ENVF=/home/dev/.ssh/environment
+umask 077
+{
+  echo "PATH=/home/dev/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+  echo "CLAUDE_CONFIG_DIR=/home/dev/.claude"
+  echo "DISABLE_AUTOUPDATER=1"
+  [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ] && echo "CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN"
+} > "$ENVF"
+chmod 600 "$ENVF"
+
+# Claude's Station Blue look, to match the white terminals and Station 256. The house rules
+# choose it; the look itself lives in Claude's themes folder, inside this project's own volume,
+# so it is copied in on every start and stays up to date.
+mkdir -p /home/dev/.claude/themes \
+  && cp /usr/local/share/station-256/station-blue.json /home/dev/.claude/themes/station-blue.json 2>>/tmp/room-start.log \
+  || echo "Claude's look was not copied in" >> /tmp/room-start.log
+
+# The same look as the first choice Claude remembers, so it never asks for one. A damaged file
+# is left alone.
+node -e '
+const fs = require("fs");
+const file = "/home/dev/.claude/.claude.json";
+let config = {};
+try { config = JSON.parse(fs.readFileSync(file, "utf8")); } catch (error) { if (error.code !== "ENOENT") process.exit(0); }
+if (!config || typeof config !== "object" || Array.isArray(config) || "theme" in config) process.exit(0);
+config.theme = "custom:station-blue";
+fs.writeFileSync(file + ".new", JSON.stringify(config, null, 2), { mode: 0o600 });
+fs.renameSync(file + ".new", file);
+' 2>>/tmp/room-start.log || echo "Claude's look was not set" >> /tmp/room-start.log
+
+# Ponytail (on through the house rules) stays plain: no band above the prompt and no offer to
+# add a status badge. Its own switches are files in Claude's folder; one left by a choice made
+# in the room is kept.
+[ -e /home/dev/.claude/.ponytail-band ] || echo off > /home/dev/.claude/.ponytail-band
+[ -e /home/dev/.claude/.ponytail-statusline-nudged ] || : > /home/dev/.claude/.ponytail-statusline-nudged
+
+# Graphify's /graphify skill for Claude, in this project's own Claude folder. Then, in the
+# background so the room isn't slowed, Graphify is updated and its skill refreshed.
+graphify install --platform claude >/dev/null 2>>/tmp/room-start.log \
+  || echo "Graphify's skill was not set up" >> /tmp/room-start.log
+( uv tool install --quiet --upgrade graphifyy >/dev/null 2>&1 && graphify install --platform claude >/dev/null 2>&1 ) &
+
+# No host key means the house did not hand one over, so the door stays shut.
+if [ -r /home/dev/.ssh/ssh_host_ed25519_key ]; then
+  /usr/sbin/sshd -f /home/dev/.ssh/sshd_config -E /tmp/sshd.log 2>>/tmp/sshd.log \
+    || echo "sshd did not start" >> /tmp/sshd.log
+else
+  echo "no host key, ssh door stays shut" >> /tmp/sshd.log
+fi
+exec sleep infinity

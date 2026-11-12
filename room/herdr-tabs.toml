@@ -1,0 +1,90 @@
+
+# ---------------------------------------------------------------------------
+# Terminal tabs. Everything above this line is herdr-config.toml's look, minus
+# its [ui] part; the room blueprint joins the two into the settings that room
+# terminal tabs use (XDG_CONFIG_HOME=/home/dev/.config/station-tabs). Agents
+# keeps using herdr-config.toml alone, so nothing here changes how it looks.
+#
+# A tab is one Herdr session, so whatever runs in it keeps running when the
+# tab's connection, or Station 256 itself, closes. It should look and act like
+# a plain terminal: no sidebar, no tab row, no Herdr keys, menus or pickers.
+# Station 256 also keeps right and middle clicks away from Herdr (its pane
+# menus), in panel/renderer/term.js.
+# ---------------------------------------------------------------------------
+
+[terminal]
+# Takes Herdr's own setting back out of the shell, so programs see a normal room.
+default_shell = "/home/dev/.local/bin/station-tab-shell"
+
+[update]
+# Rooms are rebuilt from the blueprint, never updated in place.
+version_check = false
+manifest_check = false
+
+[keys]
+# A tab is just a terminal, so none of Herdr's keys, menus or pickers can come
+# up in it, and every key goes to the program. Ctrl+B is a key programs use
+# (Claude Code: run in the background). Herdr won't run with no prefix at all,
+# so it gets one nobody presses by accident, and nothing is bound to it anyway.
+# Checked with "herdr config check" when the room blueprint is built.
+prefix = "ctrl+alt+shift+f12"
+help = ""
+settings = ""
+new_workspace = ""
+new_worktree = ""
+rename_workspace = ""
+close_workspace = ""
+workspace_picker = ""
+goto = ""
+detach = ""
+reload_config = ""
+open_notification_target = ""
+remote_image_paste = ""
+new_tab = ""
+rename_tab = ""
+previous_tab = ""
+next_tab = ""
+switch_tab = ""
+close_tab = ""
+rename_pane = ""
+edit_scrollback = ""
+copy_mode = ""
+focus_pane_left = ""
+focus_pane_down = ""
+focus_pane_up = ""
+focus_pane_right = ""
+swap_pane_left = ""
+swap_pane_down = ""
+swap_pane_up = ""
+swap_pane_right = ""
+cycle_pane_next = ""
+cycle_pane_previous = ""
+split_vertical = ""
+split_horizontal = ""
+close_pane = ""
+zoom = ""
+resize_mode = ""
+toggle_sidebar = ""
+
+[ui]
+# Never Herdr's phone layout. It takes over when a terminal is 64 columns wide
+# or less (a narrow tab, or the details pane open), and puts a "switch" menu on
+# top that can open new workspaces and tabs inside the terminal.
+mobile_width_threshold = 0
+# No sidebar and no tab row: just the terminal.
+sidebar_start_collapsed = true
+sidebar_collapsed_mode = "hidden"
+hide_tab_bar_when_single_tab = true
+pane_outer_borders = false
+# The terminal's own blinking bar, not one drawn by Herdr.
+host_cursor = "native"
+# Drag to select, then Ctrl+C copies it, as in Windows. Without a selection,
+# Ctrl+C stops the running program as usual.
+copy_on_select = false
+# The tab's title is Station 256's to set.
+window_title = ""
+prompt_new_tab_name = false
+confirm_close = false
+
+[ui.toast]
+delivery = "off"

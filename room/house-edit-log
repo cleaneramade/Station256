@@ -1,0 +1,367 @@
+#!/usr/bin/python3 -IS
+# house-edit-log TOOL - writes down which project files an AI tool just changed,
+# so Station 256 can show "Last edited by" next to each file.
+#
+# Claude Code, Codex and Gemini each run this as a hook (TOOL is claude, codex
+# or gemini). It reads what the tool reports on stdin, and adds one line per
+# changed file to /home/dev/.house-edits/edits.jsonl, a folder the house
+# mounts into the room. It must never get in a tool's way: it prints nothing,
+# always exits 0, and gives up rather than wait.
+#
+# Two kinds of report come in:
+# - A file tool finished (Claude's Edit/Write, Codex's apply_patch, Gemini's
+#   write_file/replace). The tool says which file, so that is exact.
+# - A shell command started or finished. Nothing says which files a command
+#   changed, so the start time is noted, and afterwards the project is checked
+#   for files changed since then. That is skipped when it can't be trusted:
+#   long commands, a command that changed lots of files, or files another
+#   tool reported in that time.
+import fcntl
+import hashlib
+import json
+import os
+import signal
+import sys
+import time
+
+LOG_DIR = '/home/dev/.house-edits'
+LOG = LOG_DIR + '/edits.jsonl'
+LOCK = LOG_DIR + '/edits.lock'
+WORKSPACE = '/workspace'
+MARKS = '/tmp/house-edit-log'
+MAX_BYTES = 2 * 1024 * 1024
+KEEP_LINES = 5000
+SHELL_MAX_SECONDS = 60  # longer commands overlap too much with other work
+SHELL_MAX_FILES = 50    # more than this is an install or a build, not an edit
+SCAN_SECONDS = 0.4      # a project too big to check this fast is skipped
+# Folders tools fill (packages, builds, caches) are never checked: nobody edits them by hand,
+# and a big one (a Rust build is 10,000+ files) would make every check give up.
+SKIP_DIRS = {'.git', 'node_modules', '.venv', 'venv', '__pycache__', '.cache', '.next',
+             'target', 'dist', 'build', 'out', 'coverage', '.rust', '.cargo', '.rustup',
+             '.turbo', '.gradle', '.pytest_cache', '.mypy_cache', '.ruff_cache', '.tox',
+             '.npm', '.pnpm-store', '.yarn', '.parcel-cache', '.svelte-kit', '.nuxt', '.expo',
+             'site-packages'}
+RECENT_SECONDS = 30     # a reported file must really have just changed
+
+# Which tools change one file, where they say which, and what kind of change.
+FILE_TOOLS = {
+    'claude': {'Edit': ('file_path', 'edit'), 'MultiEdit': ('file_path', 'edit'),
+               'Write': ('file_path', 'write'), 'NotebookEdit': ('notebook_path', 'edit')},
+    'gemini': {'write_file': ('file_path', 'write'), 'replace': ('file_path', 'edit')},
+    'codex': {},
+}
+SHELL_TOOLS = {
+    'claude': {'Bash'},
+    'gemini': {'run_shell_command'},
+    'codex': {'Bash', 'shell', 'shell_command', 'exec_command', 'local_shell', 'unified_exec'},
+}
+PATCH_TOOLS = {'codex': {'apply_patch'}}
+
+
+def now_ms():
+    return int(time.time() * 1000)
+
+
+def inside(cwd, path):
+    """The file's full path in the room, or None if it isn't in the project."""
+    if not isinstance(path, str) or not path:
+        return None
+    full = os.path.normpath(os.path.join(cwd or WORKSPACE, path))
+    return full if full.startswith(WORKSPACE + '/') else None
+
+
+def really_changed(path, action):
+    """Only credit a change that is really there: a deleted file is gone, an edited one just changed."""
+    try:
+        st = os.stat(path, follow_symlinks=False)
+    except FileNotFoundError:
+        return action == 'delete'
+    except OSError:
+        return False
+    return action != 'delete' and st.st_mtime >= time.time() - RECENT_SECONDS
+
+
+def tail_lines(path, size):
+    """The last lines of a file, newest first, reading at most size bytes."""
+    try:
+        with open(path, 'rb') as f:
+            f.seek(0, os.SEEK_END)
+            end = f.tell()
+            f.seek(max(0, end - size))
+            data = f.read()
+    except OSError:
+        return []
+    lines = data.split(b'\n')
+    if end > size:
+        lines = lines[1:]  # the first one is probably cut in half
+    return reversed(lines)
+
+
+def model_from_transcript(tool, path, reply_with=b''):
+    """The model of the newest reply in the tool's own record of the chat.
+    With reply_with, only a reply that contains it (the id of the tool call that made the edit)."""
+    if not isinstance(path, str) or not path:
+        return ''
+    for size in (256 * 1024, 4 * 1024 * 1024):
+        for raw in tail_lines(path, size):
+            if b'"model"' not in raw or reply_with not in raw:
+                continue
+            try:
+                entry = json.loads(raw)
+            except ValueError:
+                continue
+            if not isinstance(entry, dict):
+                continue
+            if tool == 'claude' and entry.get('type') == 'assistant':
+                model = (entry.get('message') or {}).get('model')
+            elif tool == 'gemini' and entry.get('type') == 'gemini':
+                model = entry.get('model')
+            else:
+                continue
+            # "<synthetic>" marks a message Claude Code made up itself, not a model's reply.
+            if isinstance(model, str) and model and not model.startswith('<'):
+                return model
+    return ''
+
+
+def patch_changes(cwd, patch):
+    """The files a Codex patch names: added, changed, moved or deleted."""
+    changes = []
+    if not isinstance(patch, str):
+        return changes
+    last = None
+    for line in patch.splitlines():
+        for head, action in (('*** Add File: ', 'write'), ('*** Update File: ', 'edit'),
+                             ('*** Delete File: ', 'delete'), ('*** Move to: ', 'write')):
+            if line.startswith(head):
+                path = inside(cwd, line[len(head):].strip())
+                if head == '*** Move to: ' and last is not None:
+                    changes[last] = (changes[last][0], 'delete')  # the old name is gone
+                if path:
+                    changes.append((path, action))
+                    last = len(changes) - 1
+                else:
+                    last = None
+    return changes
+
+
+def mark_file(tool, data):
+    tool_input = data.get('tool_input')
+    key = data.get('tool_use_id') or data.get('tool_call_id') or ''
+    if not key:
+        key = '%s %s' % (data.get('session_id'), json.dumps(tool_input, sort_keys=True))
+    return os.path.join(MARKS, tool + '-' + hashlib.sha1(str(key).encode()).hexdigest())
+
+
+def shell_started(tool, data):
+    os.makedirs(MARKS, mode=0o700, exist_ok=True)
+    # A command that was turned down never finishes, so its note is cleared later.
+    old = time.time() - 24 * 3600
+    with os.scandir(MARKS) as entries:
+        for entry in entries:
+            try:
+                if entry.stat().st_mtime < old:
+                    os.unlink(entry.path)
+            except OSError:
+                pass
+    with open(mark_file(tool, data), 'w') as f:
+        f.write(str(time.time_ns()))
+
+
+def shell_changes(tool, data):
+    """Project files changed while this shell command ran, as (path, action, time)."""
+    mark = mark_file(tool, data)
+    try:
+        with open(mark) as f:
+            start = int(f.read().strip())
+        os.unlink(mark)
+    except (OSError, ValueError):
+        return None
+    end = time.time_ns()
+    if end - start > SHELL_MAX_SECONDS * 1_000_000_000:
+        return None
+    found = []
+    stack = [WORKSPACE]
+    give_up = time.monotonic() + SCAN_SECONDS
+    while stack:
+        if time.monotonic() > give_up:
+            return None  # too big to check quickly; better to report nothing
+        try:
+            with os.scandir(stack.pop()) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            # CACHEDIR.TAG is how tools mark a folder as theirs, whatever its name.
+                            if entry.name not in SKIP_DIRS and not os.path.exists(entry.path + '/CACHEDIR.TAG'):
+                                stack.append(entry.path)
+                        elif entry.is_file(follow_symlinks=False):
+                            changed = entry.stat(follow_symlinks=False).st_mtime_ns
+                            if start <= changed <= end + 1_000_000_000:
+                                found.append((entry.path, 'edit', changed // 1_000_000))
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+        if len(found) > SHELL_MAX_FILES:
+            return None
+    return found, start // 1_000_000
+
+
+def waiting_paths(own=None):
+    """Files Claude reported that are still waiting to be written down (see claude_model_later)."""
+    paths = set()
+    try:
+        with os.scandir(MARKS) as entries:
+            for entry in entries:
+                if entry.name.startswith('waiting-') and entry.path != own:
+                    try:
+                        with open(entry.path) as f:
+                            paths.update(f.read().split('\n'))
+                    except OSError:
+                        pass
+    except OSError:
+        pass
+    return paths
+
+
+def write_lines(tool, model, changes, since=None, own=None):
+    """Adds the lines. With since, files any tool already reported since then are left out."""
+    if not changes:
+        return
+    fd = os.open(LOCK, os.O_WRONLY | os.O_CREAT, 0o644)
+    try:
+        # The lock is a separate file, so trimming the log (which swaps in a new
+        # file) can never lose a line another hook is adding at the same moment.
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        if since is not None:
+            seen = set()
+            for raw in tail_lines(LOG, 256 * 1024):
+                try:
+                    entry = json.loads(raw)
+                except ValueError:
+                    continue
+                if entry.get('time', 0) < since - 1000:
+                    break
+                seen.add(entry.get('path'))
+            seen.update(waiting_paths(own))
+            changes = [change for change in changes if change[0] not in seen]
+        text = ''.join(json.dumps({'time': when, 'path': path, 'tool': tool,
+                                   'model': model, 'action': action}) + '\n'
+                       for path, action, when in changes)
+        with open(LOG, 'a') as f:
+            f.write(text)
+            size = f.tell()
+        if size > MAX_BYTES:
+            with open(LOG, 'rb') as f:
+                kept = f.read().splitlines(keepends=True)[-KEEP_LINES:]
+            with open(LOG + '.new', 'wb') as f:
+                f.writelines(kept)
+            os.replace(LOG + '.new', LOG)
+    finally:
+        os.close(fd)
+
+
+def main():
+    tool = sys.argv[1] if len(sys.argv) > 1 else ''
+    if tool not in FILE_TOOLS or not os.path.isdir(LOG_DIR):
+        return
+    data = json.load(sys.stdin)
+    if not isinstance(data, dict):
+        return
+    event = data.get('hook_event_name')
+    name = data.get('tool_name')
+    tool_input = data.get('tool_input') if isinstance(data.get('tool_input'), dict) else {}
+    cwd = data.get('cwd') if isinstance(data.get('cwd'), str) else WORKSPACE
+
+    if name in SHELL_TOOLS[tool]:
+        if event in ('PreToolUse', 'BeforeTool'):
+            shell_started(tool, data)
+            return
+        result = shell_changes(tool, data)
+        if not result:
+            return
+        changes, since = result
+    elif event in ('PostToolUse', 'AfterTool'):
+        since = None
+        response = data.get('tool_response')
+        if isinstance(response, dict) and response.get('error'):
+            return
+        if name in FILE_TOOLS[tool]:
+            field, action = FILE_TOOLS[tool][name]
+            path = inside(cwd, tool_input.get(field))
+            pairs = [(path, action)] if path else []
+        elif name in PATCH_TOOLS.get(tool, ()):
+            pairs = patch_changes(cwd, tool_input.get('command') or tool_input.get('input')
+                                  or tool_input.get('patch'))
+        else:
+            return
+        when = now_ms()
+        changes = [(path, action, when) for path, action in pairs if really_changed(path, action)]
+    else:
+        return
+    if not changes:
+        return
+    model = data.get('model') if isinstance(data.get('model'), str) else ''
+    if not model and tool == 'claude':
+        claude_model_later(data, changes, since)
+        return
+    if not model:
+        model = model_from_transcript(tool, data.get('transcript_path'))
+    write_lines(tool, model, changes, since)
+
+
+def claude_model_later(data, changes, since):
+    """Claude doesn't say which model made a tool call, and its own record of the chat is
+    written a moment after the hook runs. So a helper waits in the background for the reply
+    that made this call to be written down, and takes the model from it. That is exact, even
+    for a helper agent (a subagent) running a different model. The hook itself ends at once."""
+    transcript = data.get('transcript_path')
+    agent = data.get('agent_id')
+    if isinstance(transcript, str) and isinstance(agent, str) and agent.isalnum():
+        # A subagent's own record: <session>/subagents/agent-<id>.jsonl beside the main one.
+        transcript = os.path.join(transcript[:-len('.jsonl')] if transcript.endswith('.jsonl') else transcript,
+                                  'subagents', 'agent-%s.jsonl' % agent)
+    call = data.get('tool_use_id')
+    call = call.encode() if isinstance(call, str) and call else b''
+    # Until the helper has written them down, these files are listed as waiting, so another
+    # tool's shell command running at the same time can't be credited with them.
+    os.makedirs(MARKS, mode=0o700, exist_ok=True)
+    waiting = os.path.join(MARKS, 'waiting-%d-%d' % (os.getpid(), time.time_ns()))
+    with open(waiting, 'w') as f:
+        f.write(''.join(path + '\n' for path, _, _ in changes))
+    try:
+        if os.fork():
+            return
+    except OSError:
+        write_lines('claude', model_from_transcript('claude', transcript), changes, since, waiting)
+        os.unlink(waiting)
+        return
+    # The helper: on its own, with nothing tying it to Claude's hook.
+    os.setsid()
+    quiet = os.open('/dev/null', os.O_RDWR)
+    for fd in (0, 1, 2):
+        os.dup2(quiet, fd)
+    signal.alarm(20)
+    model = ''
+    give_up = time.monotonic() + 15
+    pause = 0.05
+    while call and not model and time.monotonic() < give_up:
+        model = model_from_transcript('claude', transcript, call)
+        if not model:
+            time.sleep(pause)
+            pause = min(pause * 1.5, 1)
+    if not model:
+        model = model_from_transcript('claude', transcript)
+    write_lines('claude', model, changes, since, waiting)
+    os.unlink(waiting)
+
+
+if __name__ == '__main__':
+    # Never hold a tool up: whatever happens, stop within two seconds and say nothing.
+    signal.signal(signal.SIGALRM, lambda *_: os._exit(0))
+    signal.alarm(2)
+    try:
+        main()
+    except BaseException:
+        pass
+    os._exit(0)

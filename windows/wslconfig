@@ -1,0 +1,3 @@
+[general]
+# Windows must not put the house to sleep. The house keeper inside Ubuntu decides.
+instanceIdleTimeout=-1

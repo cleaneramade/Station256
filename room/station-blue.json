@@ -1,0 +1,18 @@
+{
+  "name": "Station Blue",
+  "base": "light",
+  "overrides": {
+    "claude": "#0f6cbd",
+    "claudeShimmer": "#5a9ee0",
+    "promptBorder": "#0f6cbd",
+    "promptBorderShimmer": "#5a9ee0",
+    "suggestion": "#0f6cbd",
+    "permission": "#0f6cbd",
+    "permissionShimmer": "#5a9ee0",
+    "error": "#c42b1c",
+    "warning": "#9a5b00",
+    "warningShimmer": "#c98a2e",
+    "success": "#107c10",
+    "briefLabelClaude": "#0f6cbd"
+  }
+}

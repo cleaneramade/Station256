@@ -1,0 +1,57 @@
+#!/usr/bin/env node
+// A stand-in for llama.cpp's llama-server in picture runs (shotrun.sh with SHOT_PATH=panel/test/stub).
+// Takes the same -m / --host / --port / -c / -ngl, answers /health 503 for a second and then 200,
+// /v1/models, and streams a slow made-up reply to /v1/chat/completions. Exits the way a crash does when
+// the last message says CRASH. Exits on SIGTERM. Writes what it was started with to stderr.
+const http = require('http');
+const args = process.argv.slice(2);
+const at = (flag, fallback) => (args.includes(flag) ? args[args.indexOf(flag) + 1] : fallback);
+const port = Number(at('--port', 8080));
+const host = at('--host', '127.0.0.1');
+const LOAD_MS = Number(process.env.STUB_LOAD_MS || 1000);
+const started = Date.now();
+console.error(`stub llama-server: ${args.join(' ')}`);
+if (process.env.STUB_DIE_AT_START) { console.error('error: failed to load model'); process.exit(1); }
+process.on('SIGTERM', () => process.exit(0));
+const words = 'This is a made up reply from the stand in model. It arrives one small piece at a time so the page can show it growing, and it keeps going for a while so there is time to press stop.'.split(' ');
+http.createServer((req, res) => {
+  // Like the real one: with LLAMA_API_KEY set, everything but /health needs it.
+  if (process.env.LLAMA_API_KEY && req.url !== '/health' && req.headers.authorization !== `Bearer ${process.env.LLAMA_API_KEY}`) {
+    res.writeHead(401, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ error: { code: 401, message: 'Invalid API Key', type: 'authentication_error' } }));
+    return;
+  }
+  if (req.url === '/health') {
+    const ready = Date.now() - started > LOAD_MS;
+    res.writeHead(ready ? 200 : 503, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(ready ? { status: 'ok' } : { error: { code: 503, message: 'Loading model' } }));
+  } else if (req.url === '/v1/models') {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ object: 'list', data: [{ id: at('-m', 'model'), object: 'model' }] }));
+  } else if (req.url === '/v1/chat/completions' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => {
+      const messages = JSON.parse(body).messages || [];
+      const last = String(messages[messages.length - 1]?.content || '');
+      if (last.includes('CRASH')) { console.error('GGML_ASSERT: out of memory (made up)'); process.exit(139); }
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      let i = 0;
+      const t0 = Date.now();
+      const timer = setInterval(() => {
+        if (i < words.length) {
+          res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: `${i ? ' ' : ''}${words[i]}` } }] })}\n\n`);
+          i += 1;
+        } else {
+          const n = words.length;
+          res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], timings: { predicted_n: n, predicted_per_second: Math.round(n / ((Date.now() - t0) / 1000) * 10) / 10 } })}\n\n`);
+          res.end('data: [DONE]\n\n');
+          clearInterval(timer);
+        }
+      }, 120);
+      res.on('close', () => clearInterval(timer));
+    });
+  } else {
+    res.writeHead(404); res.end();
+  }
+}).listen(port, host);

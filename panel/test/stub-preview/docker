@@ -1,0 +1,11 @@
+#!/bin/bash
+# A stand-in for docker in the Preview check (shots.js scene "preview"). It answers only what Preview
+# and the room's path-opening ask: the room's first process (any process of the check, so its
+# listening ports are the ones the fake room starts), and that paths are allowed. Everything else is
+# refused, so the check can never touch a real room.
+case "$1" in
+  ps) ;;
+  inspect) cat "$HOME/fake-pid" ;;
+  exec) exit 0 ;; # the "paths are allowed" look
+  *) exit 1 ;;
+esac

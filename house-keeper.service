@@ -1,0 +1,11 @@
+[Unit]
+Description=House keeper: stay awake while any light is on
+
+[Service]
+EnvironmentFile=-/etc/default/house-keeper
+ExecStart=/usr/local/sbin/house-keeper
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

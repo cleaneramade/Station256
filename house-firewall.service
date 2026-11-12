@@ -1,0 +1,13 @@
+[Unit]
+Description=House firewall for project rooms
+After=docker.service
+Requires=docker.service
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/house-firewall
+
+[Install]
+WantedBy=docker.service

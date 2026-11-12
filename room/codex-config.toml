@@ -1,0 +1,25 @@
+# Codex's settings for every room (it reads this as /etc/codex/config.toml).
+# The house rules for Codex are a separate file, /etc/codex/requirements.toml,
+# made by panel/lib/ai-rules.js and mounted by the room script.
+
+# Codex's own sandbox can't start inside a room (it needs to make namespaces,
+# which a room doesn't allow), so every command it ran failed. The room itself
+# is the wall, the same as for Claude and Gemini.
+sandbox_mode = "danger-full-access"
+
+# Codex tells house-edit-log which files it changes, for "Last edited by" in
+# Station 256. Before a shell command the time is noted; after it, and after
+# each patch, the changed files are written down.
+[[hooks.PreToolUse]]
+matcher = "^Bash$"
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "/usr/local/bin/house-edit-log codex"
+timeout = 5
+
+[[hooks.PostToolUse]]
+matcher = "^(apply_patch|Bash)$"
+[[hooks.PostToolUse.hooks]]
+type = "command"
+command = "/usr/local/bin/house-edit-log codex"
+timeout = 5

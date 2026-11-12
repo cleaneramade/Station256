@@ -1,0 +1,42 @@
+{
+  "hooks": {
+    "BeforeTool": [
+      {
+        "matcher": "^run_shell_command$",
+        "hooks": [
+          {
+            "name": "house-edit-log",
+            "type": "command",
+            "command": "/usr/local/bin/house-edit-log gemini",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "AfterTool": [
+      {
+        "matcher": "^(write_file|replace|run_shell_command)$",
+        "hooks": [
+          {
+            "name": "house-edit-log",
+            "type": "command",
+            "command": "/usr/local/bin/house-edit-log gemini",
+            "timeout": 5000
+          }
+        ]
+      }
+    ]
+  },
+  "security": {
+    "disableYoloMode": true
+  },
+  "context": {
+    "includeDirectories": [
+      "/home/dev/Documents",
+      "/home/dev/Pictures",
+      "/home/dev/Music",
+      "/home/dev/Videos",
+      "/home/dev/Downloads"
+    ]
+  }
+}

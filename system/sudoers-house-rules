@@ -1,0 +1,1 @@
+YOUR_USER ALL=(root) NOPASSWD: /usr/local/sbin/house-rules

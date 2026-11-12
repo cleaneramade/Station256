@@ -1,0 +1,48 @@
+# Herdr's look, shared by the house and every room.
+# The house copies this file into ~/.config/herdr/config.toml each time the
+# Agents tab opens, and the room blueprint bakes it into every room. So change
+# the look here, not in Herdr's own settings, or the change is lost.
+#
+# The colors match File Explorer and the terminals in panel/renderer/term.js:
+# a white page, dark gray text, light gray bars and the Windows blue.
+
+onboarding = false
+
+[theme]
+# The closest built-in theme. The colors below replace its colors.
+name = "one-light"
+auto_switch = false
+
+[theme.custom]
+accent = "#0f6cbd"
+# Bars, menus and pop-ups: the light gray of File Explorer's command bar.
+panel_bg = "#f4f4f4"
+# The sidebar takes the terminal's own white page.
+sidebar_bg = "reset"
+# The open project, like a selected row in File Explorer.
+active_row_bg = "#dcedfc"
+# The row being picked with the keyboard.
+selection_bg = "#cce4f7"
+surface0 = "#f3f3f3"
+surface1 = "#e5e5e5"
+# The thin lines between parts, like File Explorer's dividers.
+surface_dim = "#e0e0e0"
+# Text: main, softer, and softest.
+text = "#1b1b1b"
+subtext0 = "#5f5f5f"
+overlay1 = "#6d6d6d"
+overlay0 = "#7a7a7a"
+# Status colors, dark enough to read on white.
+green = "#0e8a43"
+yellow = "#b26b00"
+red = "#c42b1c"
+blue = "#0f6cbd"
+teal = "#0b7285"
+peach = "#ca5010"
+mauve = "#7a3fd1"
+
+# Keep [ui] the last part of this file. Room terminal tabs take everything above
+# it and add their own [ui] from herdr-tabs.toml (see the room Dockerfile).
+[ui]
+# Room for a project name and its state side by side.
+sidebar_width = 30

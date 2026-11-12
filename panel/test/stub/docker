@@ -1,0 +1,70 @@
+#!/bin/bash
+# A stand-in for docker in picture runs (shotrun.sh with SHOT_PATH=panel/test/stub). It answers only
+# what the Agents page and the room list ask, from made-up answers picked by STUB_AGENTS:
+#   asleep       no room is open
+#   working      SampleApp and Notes App are open; their tabs show each agent state
+#   unavailable  SampleApp is open, but asking inside it fails
+#   live         SampleApp is open, and a check changes what its AIs are doing as it goes: each
+#                $HOME/stub-live/tab-N file holds that tab's state, screen.txt is what the AI's
+#                screen shows, and each key pressed in it is written to keys.txt
+# Everything else is refused, so a picture run can never change a real room or volume.
+snapshot() { # one tab's answer from Herdr: pairs of agent and state, then a title
+  local panes="" agent status title
+  while [ $# -ge 3 ]; do
+    agent="$1"; status="$2"; title="$3"; shift 3
+    panes+="${panes:+,}{\"agent\":${agent},\"agent_status\":\"${status}\",\"pane_id\":\"w1:p1\",\"tab_id\":\"w1:t1\",\"terminal_id\":\"t\",\"terminal_title_stripped\":${title},\"workspace_id\":\"w1\",\"focused\":true,\"revision\":1}"
+  done
+  printf '{"id":"cli:api:snapshot","result":{"snapshot":{"agents":[],"panes":[%s],"tabs":[],"workspaces":[],"layouts":[],"protocol":22,"version":"0.9.5"},"type":"session_snapshot"}}' "$panes"
+}
+case "$1" in
+  ps)
+    case "$STUB_AGENTS" in
+      working) printf 'SampleApp|\nNotes App|\n' ;;
+      unavailable|live) printf 'SampleApp|\n' ;;
+    esac
+    ;;
+  exec)
+    # The chat page maker (panel/lib/chat-export.js) runs here, in the throwaway home, instead of
+    # in the room: the check made up a chat for it there.
+    if [ "$2" = -i ] && [ "$3" = room-SampleApp ] && [ "$4" = node ] && [ "$5" = -e ] && [[ "$6" == *house-chat-export* ]]; then
+      exec node -e "$6"
+    fi
+    if [ "$STUB_AGENTS" = live ]; then
+      live="$HOME/stub-live"
+      if [ "$2" = -e ]; then
+        # Herdr in one tab: herdr --session tab-N pane read|send-keys PANE [KEY]
+        [ "$4" = room-SampleApp ] || exit 1
+        case "$9" in
+          read) cat "$live/screen.txt" 2>/dev/null ;;
+          send-keys) echo "$7 ${10} ${11}" >> "$live/keys.txt" ;;
+          *) exit 1 ;;
+        esac
+        exit 0
+      fi
+      [ "$2" = room-SampleApp ] || exit 1
+      for file in "$live"/tab-*; do
+        [ -e "$file" ] || continue
+        printf '%s\t%s\n' "$(basename "$file")" "$(snapshot '"claude"' "$(cat "$file")" '"Fixing the login page tests"')"
+      done
+      exit 0
+    fi
+    [ "$STUB_AGENTS" = working ] || exit 1
+    case "$2" in
+      room-SampleApp)
+        printf 'tab-1\t%s\n' "$(snapshot '"claude"' working '"Fixing the login page tests"')"
+        printf 'tab-2\t%s\n' "$(snapshot '"codex"' blocked '"Wants to run: npm install left-pad"')"
+        # Text from a room is never trusted: a control character, markup and a very long title.
+        printf 'tab-3\t%s\n' "$(snapshot '"gemini"' done "\"<b>Done</b> \\u001b[31mrefactor of the search box, with a title that keeps going well past what fits on one line of the page\"")"
+        ;;
+      room-Notes.App)
+        printf 'tab-1\t%s\n' "$(snapshot '"claude"' idle '"Ready"')"
+        printf 'tab-2\t%s\n' "$(snapshot null unknown '"dev@Notes App: /workspace"')"
+        ;;
+      *) exit 1 ;;
+    esac
+    ;;
+  *)
+    echo "stand-in docker: not in a picture run" >&2
+    exit 1
+    ;;
+esac

@@ -1,0 +1,25 @@
+# The room's ssh door. Keys only. The one kind of forwarding allowed is the house opening a path
+# into the room's own localhost, so a site running in the room can be opened in your browser on
+# Windows (see panel/lib/ports.js). Only that way round: the room can't open a path out.
+# Runs as the ordinary room user, so no admin rights are needed.
+Port 22
+ListenAddress 0.0.0.0
+HostKey /home/dev/.ssh/ssh_host_ed25519_key
+AuthorizedKeysFile /home/dev/.ssh/authorized_keys
+PubkeyAuthentication yes
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin no
+AllowUsers dev
+UsePAM no
+PermitUserEnvironment yes
+PidFile /home/dev/.ssh/sshd.pid
+X11Forwarding no
+AllowTcpForwarding local
+PermitOpen localhost:* 127.0.0.1:* [::1]:*
+PermitListen none
+AllowAgentForwarding no
+AllowStreamLocalForwarding no
+PermitTunnel no
+GatewayPorts no
+PrintMotd no
