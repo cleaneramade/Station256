@@ -158,7 +158,7 @@ Three walls keep things apart:
 Open PowerShell and run one command:
 
 ```powershell
-irm https://raw.githubusercontent.com/YOUR_GITHUB_USER/Station256/main/installer/get.ps1 | iex
+irm https://raw.githubusercontent.com/cleaneramade/Station256/main/installer/get.ps1 | iex
 ```
 
 **It asks you up to three things, once:**

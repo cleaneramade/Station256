@@ -4,7 +4,7 @@ Sets up Station 256 on a Windows PC from one command. Run it in PowerShell
 (as administrator the first time, because turning on WSL needs it):
 
 ```powershell
-irm https://raw.githubusercontent.com/<owner>/<repo>/main/installer/get.ps1 | iex
+irm https://raw.githubusercontent.com/cleaneramade/Station256/main/installer/get.ps1 | iex
 ```
 
 ## What happens when you install

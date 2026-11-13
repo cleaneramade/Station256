@@ -3,7 +3,7 @@
 
     This is what the published command runs:
 
-        irm https://raw.githubusercontent.com/<owner>/<repo>/main/installer/get.ps1 | iex
+        irm https://raw.githubusercontent.com/cleaneramade/Station256/main/installer/get.ps1 | iex
 
     It downloads the newest release (the plain source zip GitHub makes for the tag),
     unpacks it somewhere temporary, and hands over to install.ps1. Nothing is
@@ -29,7 +29,7 @@ param(
     [string]$DistroName = '',
     [string]$Source  = '',
     # The ONE place the GitHub repo is named (owner/name). The public export rewrites this line.
-    [string]$Repo    = 'YOUR_GITHUB_USER/Station256',
+    [string]$Repo    = 'cleaneramade/Station256',
     [string]$Version = 'latest'
 )
 
