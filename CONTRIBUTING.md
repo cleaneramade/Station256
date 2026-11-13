@@ -4,7 +4,7 @@ Thanks for wanting to help. Please read this short guide first.
 
 ## Before you start
 
-- Read [docs/03-how-it-works.md](docs/03-how-it-works.md) and [docs/04-decisions-and-gotchas.md](docs/04-decisions-and-gotchas.md). The second one lists decisions that are already settled and traps that have already been hit.
+- Read [docs/03-how-it-works.md](docs/03-how-it-works.md). It explains how each part works and why.
 - For anything bigger than a small fix, open an issue first and describe what you want to change.
 - Report security problems privately, not in an issue. See [SECURITY.md](SECURITY.md).
 

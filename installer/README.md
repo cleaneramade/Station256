@@ -33,6 +33,24 @@ The defaults it never asks about: the Linux user name is your Windows name,
 lowercased (or `station` if that is not a valid Linux name); the house sleeps
 after 10 minutes of no use.
 
+## Run it again to update
+
+The installer looks for a Station 256 that is already on the PC before it does
+anything else (`lib/update.ps1`). It finds it through `house.json` in
+`%LOCALAPPDATA%\LinuxHouse`, or, for a copy set up by hand, by looking in each
+Linux for `~/house`.
+
+- **Older version found:** it asks nothing about storage, drive or password. It
+  copies the new app files, renews the walls and the sleep timer (keeping your
+  timer setting), rebuilds the room blueprint and renews the Windows helper
+  files. Your projects, settings, rooms, drive and shortcuts are not touched.
+- **Same or newer version found:** it says so and changes nothing.
+- **A copy tracked with git (a developer copy):** never overwritten. Update it
+  with git.
+- **Station 256 is open:** it asks you to close it first.
+
+The version is the one line in `VERSION` at the top of the repository.
+
 ## Remove it
 
 ```powershell
@@ -86,8 +104,7 @@ installer/
   get.ps1         one-line entry point: downloads the source zip, runs install.ps1
   install.ps1     the engine: asks, runs the nine steps, checks
   uninstall.ps1   removes what the installer made
-  make-release.ps1  old: builds a payload zip. Not needed any more
-  lib/            ui, prompts, state, wsl, checks, phases, selftest
+  lib/            ui, prompts, state, wsl, checks, phases, update, selftest
 ```
 
 The installer works straight from the unpacked source. It copies the folder

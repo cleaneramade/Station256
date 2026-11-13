@@ -333,7 +333,7 @@ log() {
 # (/etc/claude-code/CLAUDE.md), which nothing in the room can change or turn off. Codex and Gemini
 # get a copy once the room is up (room_guide_copies).
 GUIDES="$HOME/.local/state/house/guides"
-# The Windows drive that is the house. The installer maps it (docs/06-installer-plan.md).
+# The Windows drive that is the house. The installer maps it (installer/README.md).
 HOUSE_DRIVE="L:"
 
 write_room_guide() {

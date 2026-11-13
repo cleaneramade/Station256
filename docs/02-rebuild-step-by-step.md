@@ -118,7 +118,6 @@ Log out and back in for the group to apply, then `docker run --rm hello-world`.
 ```bash
 sudo apt install -y git nodejs npm python3 python3-pip fontconfig
 sudo apt install -y --no-install-recommends ffmpeg poppler-utils   # file pictures, video and PDF tools in Station 256
-curl -fsSL https://claude.ai/install.sh | bash     # lands in ~/.local/bin
 mkdir -p ~/projects ~/.config/house ~/.local/state/house ~/.local/bin
 ```
 
@@ -360,5 +359,4 @@ Window size and zoom are remembered in `~/.config/house/panel.json`.
 | 11 | tests | house | yes |
 | 12 | first launch | Windows | user clicks |
 
-Steps 2-11 are all scriptable. That is the basis of the installer plan in
-`06-installer-plan.md`.
+Steps 2-11 are all scriptable. That is what the installer in `installer/` does.

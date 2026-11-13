@@ -50,9 +50,9 @@ a known, accepted decision.
 
 ## Where the project stands
 
-The **foundation is closed** (user's decision, 2026-11-05). The project is now in
-a micro-fixing phase. What works: house, rooms, firewall, rules, sleep, the panel
-shell, window motion, and snapping with Windows in both directions.
+Everything in the README works today: the file explorer, the rooms, the walls,
+House Rules, the lock, the built-in viewers and editors, the web browser, search,
+schedules and Local AI.
 
-Not built yet: the full Allow/Ask/Block rules screen in the app, GitHub
-connection, and the Windows-native version of the explorer (a months-out goal).
+Still ahead: a first install on a brand-new PC has not been tried yet, and a
+version of the explorer that runs on Windows itself is a long-term goal.

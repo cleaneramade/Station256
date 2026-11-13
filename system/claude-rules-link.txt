@@ -1,5 +1,0 @@
-Claude anywhere in the house follows the same rules as Claude in a room, through this link:
-
-/etc/claude-code/managed-settings.json -> ~/.config/house/claude-managed.json (in the house user's home)
-
-Rooms get the same file mounted by bin/room.

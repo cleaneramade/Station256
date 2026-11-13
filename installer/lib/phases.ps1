@@ -431,6 +431,8 @@ function Invoke-PhaseSystem {
     $user  = $A['linuxUser']
     $mins  = [int]$A['idleMinutes']
     $secs  = $mins * 60
+    # An update hands over the timer as it is set now, so it is never changed.
+    if ($A.ContainsKey('idleSeconds')) { $secs = [int]$A['idleSeconds'] }
     if ($secs -le 0) { $secs = 0 }
 
     if (Test-DryRun) {
@@ -443,7 +445,7 @@ function Invoke-PhaseSystem {
         else {
             Write-Would ("set the sleep timer to " + $secs + " seconds")
         }
-        Write-Would "write the starting house rules"
+        Write-Would "write the starting house rules, only if there are none yet"
         return
     }
 
@@ -579,8 +581,10 @@ echo ROOM_BUILT
 # ===========================================================================
 # PHASE 8 - the Windows half
 # ===========================================================================
+# -FilesOnly is an update: the helper files are renewed, and the drive, the shortcuts,
+# the right-click menu and the login step are left exactly as they are.
 function Invoke-PhaseWindows {
-    param([hashtable]$A)
+    param([hashtable]$A, [switch]$FilesOnly)
     Write-Step "Step 9 of 9: the Windows half"
 
     $letter  = $A['driveLetter']
@@ -591,9 +595,10 @@ function Invoke-PhaseWindows {
     $source  = Get-WindowsSource
 
     if (Test-DryRun) {
-        Write-Would ("map " + $letter + ": to \\wsl.localhost\" + $distro + ", kept after restart")
+        if (-not $FilesOnly) { Write-Would ("map " + $letter + ": to \\wsl.localhost\" + $distro + ", kept after restart") }
         Write-Would ("copy the helper scripts to " + $appDir + ", plus house.json (which Linux, which user, which drive)")
         Write-Would ("copy uninstall.ps1 to " + (Join-Path $appDir 'installer'))
+        if ($FilesOnly) { Write-Would "leave the drive, shortcuts, right-click menu and login step as they are"; return }
         if ($A['rightClickMenu'])   { Write-Would ("add 'Open Linux terminal here' on " + $letter + ": only (" + ($names.menuKeys -join ' and ') + ")") }
         if ($A['sleepAtLogin'])     { Write-Would ("add the login sleep step (HKCU Run: " + $names.runName + ")") }
         if ($A['desktopShortcut'])  { Write-Would ("put a shortcut on the Desktop: " + $names.lnkName) }
@@ -607,7 +612,10 @@ function Invoke-PhaseWindows {
         $remote = (Get-ItemProperty ("HKCU:\Network\" + $letter) -ErrorAction SilentlyContinue).RemotePath
         if ($remote -like ('*wsl.localhost\' + $distro + '*')) { $mapped = $true }
     }
-    if ($mapped) {
+    if ($FilesOnly) {
+        # an update never changes the drive
+    }
+    elseif ($mapped) {
         Write-Skip ($letter + ": is already mapped to the house.")
     }
     else {
@@ -643,6 +651,11 @@ function Invoke-PhaseWindows {
         Copy-Item (Join-Path $inst 'uninstall.ps1') $dest -Force
         Copy-Item (Join-Path $inst 'lib\*.ps1') (Join-Path $dest 'lib') -Force -Exclude 'selftest.ps1'
         Write-Ok ("Uninstaller saved at " + (Join-Path $dest 'uninstall.ps1'))
+    }
+
+    if ($FilesOnly) {
+        Write-Skip "Drive, shortcuts, right-click menu and login step left as they are."
+        return
     }
 
     # --- registry: built from the real answers, not a fixed file ---

@@ -39,14 +39,14 @@ Optional, used during the build but not required to run:
 | Node.js | 22.22.1 | apt (`nodejs`) |
 | npm | 9.2.0 | apt |
 | Electron | 45.2.2 | `npm install` in `~/house/panel` |
-| Claude Code | 2.1.318 | installed to `~/.local/bin` |
+| AI tools | your choice | none is installed for you; tick Claude Code, Codex or Gemini in House Rules |
 | git | 2.53.0 | apt |
 | iptables | 1.8.11 | apt — the room firewall uses it |
 | fontconfig | 2.17.1 | apt — needed for crisp text in the panel |
 
 User `your-user`, uid 1000, in groups: `your-user adm cdrom sudo dip plugdev users docker`.
 
-## Things that are NOT in this backup and must not be
+## Things that are never in the repository
 
 - **Claude login token** (`~/.config/house/claude-token`) — log in again instead.
 - **Windows link secret** (`~/.local/state/house/link-token`) — generated on first run.

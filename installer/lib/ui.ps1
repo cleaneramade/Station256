@@ -17,8 +17,18 @@ function Write-Banner {
     Write-Host ''
 }
 
+# An update runs only some of the nine steps, so it gives them its own numbers.
+$script:UiStepMap = @{}
+function Set-StepMap {
+    param([hashtable]$Map)
+    $script:UiStepMap = $Map
+}
+
 function Write-Step {
     param([string]$Text)
+    foreach ($k in @($script:UiStepMap.Keys)) {
+        if ($Text.StartsWith($k)) { $Text = $script:UiStepMap[$k] + $Text.Substring($k.Length) }
+    }
     Write-Host ''
     Write-Host ("-- " + $Text) -ForegroundColor White
 }

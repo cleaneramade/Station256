@@ -30,7 +30,7 @@ Write-Host ''
 Write-Host '  Installer selftest' -ForegroundColor Cyan
 Write-Host ''
 
-$libFiles  = @('ui.ps1','prompts.ps1','state.ps1','wsl.ps1','checks.ps1','phases.ps1')
+$libFiles  = @('ui.ps1','prompts.ps1','state.ps1','wsl.ps1','checks.ps1','phases.ps1','update.ps1')
 $allFiles  = @('install.ps1','get.ps1','uninstall.ps1')
 foreach ($f in $libFiles) { $allFiles += ('lib\' + $f) }
 
@@ -350,6 +350,50 @@ finally {
     Remove-Item (Get-HouseNames).appDir -Recurse -Force -ErrorAction SilentlyContinue
     Set-HouseDistro -Name 'Station256'
 }
+
+# ---------------------------------------------------------------------------
+Write-Host ''
+Write-Host '  Already installed: update, never a second install' -ForegroundColor White
+
+. (Join-Path $root 'lib\update.ps1')
+
+Check 'older version is updated'              ((Compare-HouseVersion -Installed '1.2.0' -Offered '1.3.0') -lt 0)
+Check 'same version is left alone'            ((Compare-HouseVersion -Installed '1.3.0' -Offered '1.3.0') -eq 0)
+Check 'newer version is left alone'           ((Compare-HouseVersion -Installed '1.10.0' -Offered '1.9.0') -gt 0)
+Check 'no recorded version counts as older'   ((Compare-HouseVersion -Installed '' -Offered '1.3.0') -lt 0)
+
+$probe = ConvertFrom-HouseProbe -Distro 'Station256' -Lines @('USER=sam', 'VERSION=1.2.0', 'GIT=0', 'RUNNING=1', 'IDLE=900')
+Check 'probe: user, version and Linux are read' (($probe.user -eq 'sam') -and ($probe.version -eq '1.2.0') -and ($probe.distro -eq 'Station256'))
+Check 'probe: an open Station 256 is seen'      ($probe.isRunning -and (-not $probe.isGit))
+Check 'probe: the sleep timer is kept as set'   ($probe.idleSeconds -eq 900)
+$probe = ConvertFrom-HouseProbe -Distro 'Ubuntu' -Lines @('USER=dev', 'VERSION=', 'GIT=1', 'RUNNING=0', 'IDLE=')
+Check 'probe: a git copy is a developer copy'   ($probe.isGit -and ($probe.version -eq ''))
+Check 'probe: an unknown timer is not guessed'  ($probe.idleSeconds -eq -1)
+$probe = ConvertFrom-HouseProbe -Distro 'Ubuntu' -Lines @('USER=dev', 'IDLE=abc')
+Check 'probe: a broken timer value is not used' ($probe.idleSeconds -eq -1)
+Check 'probe: a Linux with no house is nothing' ($null -eq (ConvertFrom-HouseProbe -Distro 'Other' -Lines @('', 'some noise')))
+
+$updateText  = Get-Content (Join-Path $root 'lib\update.ps1') -Raw
+$installText = Get-Content (Join-Path $root 'install.ps1') -Raw
+Check 'install.ps1 looks for an existing house before asking anything' ($installText.IndexOf('Find-ExistingHouse') -gt 0 -and $installText.IndexOf('Find-ExistingHouse') -lt $installText.IndexOf('Read-AllAnswers'))
+Check 'a developer copy is refused before any step runs' ($updateText.IndexOf('$Existing.isGit') -lt $updateText.IndexOf('Invoke-PhaseCode'))
+Check 'an update leaves the drive and shortcuts alone'   ($updateText -match 'Invoke-PhaseWindows -A \$a -FilesOnly')
+Check 'an update never runs the WSL, user, settings or Docker steps' ($updateText -notmatch 'Invoke-Phase(Wsl|User|Config|Docker|Packages)')
+
+# The version file is what an update compares, so it has to match the changelog.
+$repoRoot = Split-Path $root -Parent
+$verFile  = Join-Path $repoRoot 'VERSION'
+$logFile  = Join-Path $repoRoot 'CHANGELOG.md'
+if ((Test-Path $verFile) -and (Test-Path $logFile)) {
+    $ver = ((Get-Content $verFile -TotalCount 1) + '').Trim()
+    $top = (Select-String -Path $logFile -Pattern '^## (\S+)' | Select-Object -First 1).Matches[0].Groups[1].Value
+    Check 'VERSION matches the newest changelog entry' ($ver -eq $top) ('VERSION ' + $ver + ', changelog ' + $top)
+}
+
+Set-StepMap -Map @{ 'Step 6 of 9' = 'Update 1 of 4' }
+$said = (Write-Step 'Step 6 of 9: Station 256 code' 6>&1 | Out-String)
+Check 'an update numbers its own steps' ($said -match 'Update 1 of 4: Station 256 code')
+Set-StepMap -Map @{}
 
 # ---------------------------------------------------------------------------
 Write-Host ''

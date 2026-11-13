@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.3.0
+
+### Added
+
+- **Run the install command again to update.** The installer now looks for a Station 256 that is already on the PC before it does anything else. If it finds one, it skips the questions and the setup steps and only updates the app's own files. Your projects, settings, rooms, drive and shortcuts are left as they are, and the sleep timer keeps its setting.
+- If you already have the newest version, it says so and changes nothing.
+- A copy that is tracked with git (a developer copy) is never overwritten.
+- Rooms from before AI tools could be chosen keep all three tools after an update.
+
+### Changed
+
+- A simpler README, and fewer files in the repository: planning notes and the maker's own test tools are no longer published.
+
 ## 1.2.0
 
 ### Changed

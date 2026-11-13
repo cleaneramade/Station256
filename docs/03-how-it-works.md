@@ -1221,8 +1221,8 @@ Both directions work:
   on a real PC: panel layouts, suggested pair first, peek sliver,
   triggers within 15 px of the top, edge and corner previews, maximize-button
   flyout, a tray with real window pictures, and it carries on after Windows' own
-  tray closes. `Win`+arrow follows the measured rulebook in `KEY_MOVES`
-  (`windows/re-keys.ps1` measures it). The helper reads the key itself, because
+  tray closes. `Win`+arrow follows the measured rulebook in `KEY_MOVES`.
+  The helper reads the key itself, because
   the surface is always reported as "maximized".
 - **Station snapping Windows apps** — the helper lists and moves Windows windows
   through the link.

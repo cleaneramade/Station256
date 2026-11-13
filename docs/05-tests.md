@@ -144,14 +144,8 @@ being used.
 
 | Script | Covers |
 |---|---|
-| `windows/snap-both-ways.ps1` | snapping in both directions. `-Rounds 0` runs only the panel part |
-| `windows/seam-test.ps1` | the shared seam — real mouse, 27 checks. `-Repeat` counts missed drags |
-| `windows/seam-form.ps1` | a test window for the seam checks |
-| `windows/re-keys.ps1` | measures Windows 11's own `Win`+arrow behaviour, to regenerate `KEY_MOVES` |
 | `panel/test/clipboard-windows.ps1` | the one clipboard: files and text copied in the house reach Windows, text copied in Windows reaches the house within a second, nothing bounces back. Runs a hidden panel copy on its own link port and the helper's clipboard part; refuses to run while Station 256 is open |
 
-**Copy `snap-both-ways.ps1` and `seam-form.ps1` out of the UNC path before
-running them.** PowerShell will not execute them from `\\wsl.localhost`.
 
 ## Rules every test must follow
 
@@ -240,8 +234,7 @@ reached the house through WSLg first (67 ms); the helper's own message followed 
 found nothing to change ("written":0). An earlier version crashed WSLg (see rule 1).
 
 Everything above passed as of the 2026-11-05 second review pass and the
-2026-11-06 restart and sleep checks, with these exceptions, all listed in
-`04-decisions-and-gotchas.md`:
+2026-11-06 restart and sleep checks, with these exceptions:
 
 - the one unexplained dockerd healthcheck failure, never reproduced
 - the ~14-minute sleep instead of 10

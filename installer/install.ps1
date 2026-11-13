@@ -42,7 +42,7 @@ $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
 if (-not $here) { $here = Split-Path -Parent $MyInvocation.MyCommand.Definition }
 
-foreach ($f in @('ui.ps1','prompts.ps1','state.ps1','wsl.ps1','checks.ps1','phases.ps1')) {
+foreach ($f in @('ui.ps1','prompts.ps1','state.ps1','wsl.ps1','checks.ps1','phases.ps1','update.ps1')) {
     $p = Join-Path $here ('lib\' + $f)
     if (-not (Test-Path $p)) {
         Write-Host ("Missing part of the installer: " + $p) -ForegroundColor Red
@@ -101,6 +101,16 @@ if ($CheckOnly) {
         foreach ($b in $pre.blockers) { Write-Info ("- " + $b) }
     }
     exit 0
+}
+
+# ---------------------------------------------------------------------------
+# Already installed? Then this is an update, never a second install.
+# ---------------------------------------------------------------------------
+if (-not $AskOnly) {
+    $existing = Find-ExistingHouse
+    if ($existing) {
+        exit (Invoke-HouseUpdate -Existing $existing -AssumeYes ([bool]($Yes -or $Resume)))
+    }
 }
 
 # In a dry run, admin rights do not matter because nothing is installed.
