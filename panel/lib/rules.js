@@ -21,6 +21,7 @@ const OLD_ROOM_DIR = path.join(CONFIG_DIR, 'claude-rooms');
 
 // The house folders a room can be given, by the "Your folders" rule. In a room each one is at
 // /home/dev/<name>. bin/room mounts the same list, so the two have to stay in step.
+const ROOM_PICTURE_FOLDERS = ['/home/dev/.station-browser/out', '/tmp/station-256-pastes'];
 const HOME_FOLDERS = ['Documents', 'Pictures', 'Music', 'Videos', 'Downloads'];
 
 // In the order they're shown. section "main" is Main rules; "more" is More controls.
@@ -158,6 +159,12 @@ function claudeSettings(rules, room = false) {
     permissions.allow.push(...folders.map((folder) => `Read(/${folder}/**)`));
     if (rules.homeFolders === 'allow') permissions.allow.push(...folders.map((folder) => `Edit(/${folder}/**)`));
     else permissions.deny.push(...folders.map((folder) => `Edit(/${folder}/**)`));
+  }
+  // The pictures Station itself makes for a room's AI (the Web Browser's screenshots, pasted images)
+  // are read-only there. Without this, every look at one asked "read outside the project?".
+  if (room) {
+    permissions.additionalDirectories = [...(permissions.additionalDirectories || []), ...ROOM_PICTURE_FOLDERS];
+    permissions.allow.push(...ROOM_PICTURE_FOLDERS.map((folder) => `Read(/${folder}/**)`));
   }
   const look = { theme: `custom:${THEME}` };
   return room ? { permissions, hooks: ROOM_HOOKS, ...look, ...PLUGINS } : { permissions, hooks: HOUSE_HOOKS, ...look, ...PLUGINS };

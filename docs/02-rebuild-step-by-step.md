@@ -44,9 +44,9 @@ Copy in this repo: `windows/wslconfig.txt`.
 house under the keeper's feet. Sleep is handled inside the house instead
 (step 7) so it can tell the difference between "idle" and "a job is running".
 
-The 250 GB disk cap is not a partition — it is the size of the virtual disk.
-`df -h /` reports about 246 GB. It is resized by the Windows helper
-(`house-helper.ps1`), never by hand.
+The disk size you choose is not a partition — it is the size of the virtual disk
+(a limit it can grow to, not space reserved up front). `df -h /` reports a little
+less than the size you chose. It is resized by the Windows helper (`house-helper.ps1`), never by hand.
 
 ---
 
@@ -247,7 +247,8 @@ sudo /usr/local/sbin/house-rules firewall-check && echo WALLS_OK
 room build
 room new testbed
 room list
-room login          # one-time Claude login shared by all rooms
+room ai set claude  # choose your AI tools (any of claude, codex, gemini), then: room build
+room login          # only if you chose Claude: one-time login shared by all rooms
 room close testbed
 ```
 

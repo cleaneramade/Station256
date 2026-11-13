@@ -55,8 +55,11 @@ reimplement anything.
 5. **Never touch anything it did not create.** Especially: do not set the
    machine-wide `RestoreConnection` value, and do not go near other mapped drives.
 6. **Say what it is about to do before each admin action.**
-7. **No secrets written to disk.** The Claude login happens interactively at the
-   end, through `room login`.
+7. **No secrets written to disk.** The one exception is the Linux password during the
+   single restart: it is kept only as a Windows-protected copy (DPAPI, this user only)
+   and deleted as soon as the Linux user is made.
+8. **Installs no AI.** Which AI tools a person uses is their choice, made inside
+   Station 256 (House Rules > Your AI tools). Nothing is signed in by the installer.
 
 ## The question flow
 
@@ -134,23 +137,23 @@ Maps directly onto `02-rebuild-step-by-step.md`.
 | **1. Ask** | the whole question flow, then the review screen | no | — |
 | **2. WSL** | `wsl --install`, `wsl --update`, `wsl --install -d Ubuntu` | yes | often |
 | **3. Config** | write `.wslconfig`, `/etc/wsl.conf`, `wsl --shutdown` | yes | no |
-| **4. House** | Docker Engine, packages, Claude Code, folders | no (sudo inside) | no — see note below |
+| **4. House** | Docker Engine, packages (Node, git), folders | no (sudo inside) | no — see note below |
 | **5. Code** | fetch the release, `npm install`, `chmod +x`, symlink `room` | no | no |
 | **6. System** | install scripts, sudoers, services, enable them | sudo once | no |
 | **7. Rooms** | `room build`, which is slow (apt inside the image) | no | no |
 | **8. Windows** | map the drive, copy `LinuxHouse\*`, registry, shortcuts | no (HKCU only) | no |
 | **9. Verify** | run the health check from `05-tests.md` | no | no |
-| **10. Finish** | print what was installed, offer to launch, remind about `room login` | no | no |
+| **10. Finish** | print what was installed, offer to launch, say where to choose AI tools | no | no |
 
 ### Interruptions, and which ones are real
 
-Only **two** pauses are unavoidable:
+Only **one** pause is unavoidable, and the installer handles it:
 
 1. **A Windows restart after phase 2.** `wsl --install` enables a virtualisation
-   feature and Windows needs the reboot. On a machine where WSL is already
-   installed this pause disappears completely.
-2. **`room login` at the very end.** It opens a browser for a Claude
-   subscription login. Cannot be scripted.
+   feature and Windows needs the reboot. The installer saves the answers, registers a
+   one-time carry-on (HKCU RunOnce), offers to restart, and when you sign back in it
+   finishes by itself with no second command and no repeated questions. On a machine
+   where WSL is already installed this pause disappears completely.
 
 Two that look like pauses but are not:
 
@@ -194,7 +197,6 @@ Fail loudly, with the fix, on any of these:
 [ok] room blueprint built
 [ok] L: mapped and persistent
 [ok] Station 256 shortcut on Desktop and Start menu
-[!!] Claude not logged in yet - run: room login
 ```
 
 That last line is a to-do, not a failure. The login is interactive and cannot be
@@ -223,7 +225,9 @@ scripted.
    test honestly.
 6. The npm wrapper, if it is wanted.
 
-## The step the installer cannot do
+## Choosing your AI tools
 
-`room login`. It opens a browser for a Claude subscription login. The installer
-prints the command and gets out of the way.
+The installer does not install or sign in to any AI. When Station 256 first opens, House
+Rules > Your AI tools lets each person tick the ones they use (Claude Code, Codex,
+Gemini). Only those go into the room blueprint (`room ai set`, `room build`). Signing in is
+done by the person, in the tool itself (Claude users run `room login`).

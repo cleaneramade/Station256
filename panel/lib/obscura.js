@@ -157,6 +157,8 @@ function guestHook(guest) {
     event.preventDefault();
     notify(guest, { kind: 'key', key: input.key, ctrl: !!input.control, shift: !!input.shift, alt: !!input.alt });
   });
+  // Ctrl and the mouse wheel: the tab zooms this page (obscura-tab.js), the same as Ctrl + and Ctrl -.
+  guest.on('zoom-changed', (_event, direction) => notify(guest, { kind: 'zoom', direction: direction === 'in' ? 1 : -1 }));
   // Right-click: the tab draws Station's own menu (obscura-tab.js) from what was under the pointer.
   // Only web links are passed on; the page's own words for them never are.
   guest.on('context-menu', (_event, p) => {

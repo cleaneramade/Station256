@@ -63,16 +63,3 @@ setInterval(async () => {
     if (!up && previewing.get(name) === 'running') previewSet(name, null);
   }
 }, 5000);
-
-// The button: only an icon, the size of the ▾ beside Enter Room, so every card keeps one row.
-function previewButton(project) {
-  const button = el('button', 'home-card-btn more preview-btn');
-  button.dataset.project = project.name;
-  button.append(icon('open', 'tint-blue'));
-  previewPaint(button);
-  button.addEventListener('click', (event) => {
-    event.stopPropagation();
-    previewProject(project.name);
-  });
-  return button;
-}

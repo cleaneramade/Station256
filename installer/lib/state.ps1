@@ -1,8 +1,9 @@
 # state.ps1 - remembers answers and finished steps, so the install can carry on
 # after a restart without asking anything twice.
 #
-# The password is deliberately NOT saved. If the install stops before the Linux
-# user is made, it asks for the password again on the next run.
+# The password is never saved as text. Only when a Windows restart is pending, a copy
+# protected by Windows for this user alone (DPAPI) is kept so the install can finish by
+# itself after the restart. It is deleted the moment the Linux user is made.
 # PowerShell 5.1 safe.
 
 function Get-StatePath {
@@ -35,7 +36,9 @@ function Read-InstallState {
     $done = @()
     if ($obj.done) { $done = @($obj.done) }
 
-    return @{ answers = $answers; done = $done; version = 1 }
+    $blob = ''
+    if ($obj.pwBlob) { $blob = [string]$obj.pwBlob }
+    return @{ answers = $answers; done = $done; version = 1; pwBlob = $blob }
 }
 
 function Write-InstallState {
@@ -53,6 +56,7 @@ function Write-InstallState {
     }
 
     $out = @{ answers = $safe; done = @($State.done); version = 1 }
+    if ($State.pwBlob) { $out['pwBlob'] = $State.pwBlob }
     $out | ConvertTo-Json -Depth 5 | Set-Content -Path $path -Encoding utf8
 }
 
@@ -72,4 +76,35 @@ function Set-PhaseDone {
 function Clear-InstallState {
     $path = Get-StatePath
     if (Test-Path $path) { Remove-Item $path -Force }
+}
+
+# A password kept safe for this Windows user only (DPAPI). Used only across the one restart.
+function Protect-Password {
+    param([string]$Plain)
+    $secure = ConvertTo-SecureString -String $Plain -AsPlainText -Force
+    return (ConvertFrom-SecureString -SecureString $secure)
+}
+
+function Unprotect-Password {
+    param([string]$Blob)
+    try {
+        $secure = ConvertTo-SecureString -String $Blob
+        return ([System.Net.NetworkCredential]::new('', $secure)).Password
+    }
+    catch { return '' }
+}
+
+# After a restart Windows runs the installer again by itself, once, at the next sign-in.
+function Register-InstallResume {
+    param([string]$ScriptPath, [string]$DistroName)
+    $cmd = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' + $ScriptPath + '" -Resume -DistroName ' + $DistroName
+    $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce'
+    if (-not (Test-Path $key)) { New-Item -Path $key -Force | Out-Null }
+    Set-ItemProperty -Path $key -Name ('StationSetup_' + $DistroName) -Value $cmd
+}
+
+function Unregister-InstallResume {
+    param([string]$DistroName)
+    $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce'
+    Remove-ItemProperty -Path $key -Name ('StationSetup_' + $DistroName) -ErrorAction SilentlyContinue
 }

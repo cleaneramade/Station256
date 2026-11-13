@@ -312,13 +312,12 @@ echo GROUPED
 # ===========================================================================
 function Invoke-PhasePackages {
     param([hashtable]$A)
-    Write-Step "Step 5 of 9: Node, git and Claude Code"
+    Write-Step "Step 5 of 9: Node and git"
 
     $user = $A['linuxUser']
 
     if (Test-DryRun) {
         Write-Would "install git, nodejs, npm, python3 and fontconfig inside the house"
-        Write-Would "install Claude Code into the user's own folder"
         Write-Would "create ~/projects, ~/.config/house and ~/.local/state/house"
         return
     }
@@ -338,16 +337,13 @@ echo PACKAGES_OK
     $sh2 = @'
 set -e
 mkdir -p "$HOME/projects" "$HOME/.config/house" "$HOME/.local/state/house" "$HOME/.local/bin"
-if [ ! -x "$HOME/.local/bin/claude" ]; then
-  curl -fsSL https://claude.ai/install.sh | bash
-fi
 if ! grep -q 'HOME/.local/bin' "$HOME/.bashrc" 2>/dev/null; then
   echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
 fi
 echo USER_SETUP_OK
 '@
-    Invoke-HouseScriptOrFail -Script $sh2 -AsUser $user -What "Setting up your folders and Claude Code" -Quiet | Out-Null
-    Write-Ok "Folders created and Claude Code installed."
+    Invoke-HouseScriptOrFail -Script $sh2 -AsUser $user -What "Setting up your folders" -Quiet | Out-Null
+    Write-Ok "Folders created."
 }
 
 # ===========================================================================
@@ -367,7 +363,6 @@ function Invoke-PhaseCode {
         Write-Would "build the video editor in ~/house/editor if the release didn't bring it built"
         Write-Would "put the execute bit back on the scripts"
         Write-Would "link ~/.local/bin/room to ~/house/bin/room"
-        Write-Would "install Local AI: llama.cpp's server and a small model (system/install-llama.sh)"
         return
     }
 
@@ -424,16 +419,6 @@ echo EDITOR_OK
 '@
     Invoke-HouseScriptOrFail -Script $sh3 -AsUser $user -What "building the video editor" -Quiet | Out-Null
     Write-Ok "Video editor ready."
-
-    # Local AI: llama.cpp's server (the NVIDIA build when the card can run it) and one small model.
-    Write-Info "Installing Local AI (llama.cpp and a 2.5 GB model). This takes a few minutes."
-    $sh4 = @'
-set -e
-"$HOME/house/system/install-llama.sh"
-echo LLAMA_OK
-'@
-    Invoke-HouseScriptOrFail -Script $sh4 -AsUser $user -What "installing Local AI" -Quiet | Out-Null
-    Write-Ok "Local AI ready."
 }
 
 # ===========================================================================
@@ -800,11 +785,6 @@ function Invoke-PhaseVerify {
         if (Test-Path (Join-Path ([Environment]::GetFolderPath('Desktop')) $names.lnkName)) { Write-Ok 'Desktop shortcut'; $good++ }
         else { Write-Fail 'Desktop shortcut is missing'; $bad++ }
     }
-
-    # Claude login cannot be scripted.
-    $logged = Get-HouseValue -Script 'test -s "$HOME/.config/house/claude-token" && echo YES || echo NO' -AsUser $user
-    if ($logged -eq 'YES') { Write-Ok 'Claude is connected'; $good++ }
-    else { Write-Todo 'Claude is not connected yet'; $todo += 'Open a house terminal and run: room login' }
 
     return @{ good = $good; bad = $bad; todo = $todo }
 }

@@ -653,6 +653,25 @@ namespace LinuxHouse {
         var reply = new Dictionary<string, object> { { "type", "reply" }, { "id", m["id"] } };
         if (png != null) reply["png"] = Convert.ToBase64String(png);
         Send(reply);
+      } else if (op == "clipboard-clear") {
+        // Lock is closed: Windows gives back text that came across from the house, but only while
+        // it still holds exactly that text (a newer copy in Windows stays).
+        var reply = new Dictionary<string, object> { { "type", "reply" }, { "id", m["id"] } };
+        var form = catcherForm;
+        if (form != null) {
+          try {
+            form.Invoke(new Action(() => {
+              string gone = m.ContainsKey("text") ? m["text"] as string : null;
+              if (!string.IsNullOrEmpty(gone) && ClipboardText() == gone) {
+                System.Windows.Forms.Clipboard.Clear();
+                ourChange = GetClipboardSequenceNumber();
+                houseHas = null;
+              }
+            }));
+            reply["ok"] = true;
+          } catch (Exception e) { reply["error"] = e.Message; }
+        }
+        Send(reply);
       } else if (op == "clipboard-set") {
         // Copied in the house, so it can be pasted in Windows too. The house sends this only when
         // you copy something there.
@@ -684,6 +703,14 @@ namespace LinuxHouse {
           reply["ok"] = true;
           Log((pick ? "open with: " : "opened in Windows: ") + target);
         } catch (Exception e) { reply["error"] = e.Message; }
+        Send(reply);
+      } else if (op == "display-scale") {
+        // Windows' display scale (125% is 1.25), read from the setting, so a page at 100% in
+        // Station's Web Browser is as big as in a normal browser.
+        var reply = new Dictionary<string, object> { { "type", "reply" }, { "id", m["id"] } };
+        double dpi = 96;
+        try { dpi = Convert.ToDouble(Microsoft.Win32.Registry.GetValue(@"HKEY_CURRENT_USER\Control Panel\Desktop\WindowMetrics", "AppliedDPI", 96)); } catch { }
+        reply["scale"] = dpi >= 96 && dpi <= 480 ? dpi / 96.0 : 1.0;
         Send(reply);
       } else if (op == "open-url") {
         // A web link clicked in the app, opened in your browser. Only http and https: never a file,

@@ -24,6 +24,8 @@ const SCENES = {
   obscura: require('./obscura-scene'),
   // The same tab against a hostile site: escapes, windows, permissions, downloads, keys (test/obscura-attacks.js).
   obscuraAttacks: require('./obscura-attacks'),
+  // The README's pictures, with made-up projects only (test/gallery-scene.js).
+  ...require('./gallery-scene'),
   // Word documents in the preview (test/docx-scene.js).
   ...require('./docx-scene'),
   // In the icon views, the space under a tile's name matches the space over its picture, measured
@@ -2408,6 +2410,17 @@ const SCENES = {
     }
     await page(`state.status = wasStatus; renderHouseNote(); true`);
 
+    // A screen snip copied in Windows is refused while locked, like everything else from Windows.
+    {
+      const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+      const home = await page(`houseTest.state.home`);
+      global.stationChecks.copyPicture(png);
+      const made = await page(`window.house.call('pastePicture', ${JSON.stringify(home)}).then((made) => made, (error) => 'ERR ' + error.message)`);
+      global.stationChecks.copyPicture(null);
+      report(typeof made === 'string' && /^ERR.*locked/.test(made), `a screen snip is refused while locked: ${made}`);
+      if (typeof made === 'string' && !/^ERR/.test(made)) require('fs').rmSync(made, { force: true });
+    }
+
     // Alt+V in a terminal pastes, as Ctrl+V does. Alt+Shift+V is still the program's.
     const { ipcMain } = require('electron');
     const real = ipcMain._invokeHandlers?.get('call');
@@ -3444,14 +3457,12 @@ exec -a claude sleep 600
     // Home: an open room's card has an arrow beside Enter Room, listing its rooms to close.
     await page(`(async () => { houseTest.activateTab(houseTest.state.tabs.find((t) => t.kind === 'files')); await houseTest.navigate('home:'); return true; })()`);
     await sleep(2500);
-    const arrow = await page(`(() => { const c = document.querySelector('.home-card[data-project="SampleApp"]'); const b = c && c.querySelector('.home-card-btn.more:not(.preview-btn)'); return b ? b.outerHTML.slice(0, 160) : ''; })()`);
-    report(arrow.includes('home-card-btn live more'), `SampleApp's card has the rooms arrow (${JSON.stringify(arrow)})`);
-    const asleep = await page(`(() => { const c = [...document.querySelectorAll('.home-card')].find((x) => !x.classList.contains('up')); return c ? String(Boolean(c.querySelector('.home-card-btn.more:not(.preview-btn)'))) + ' ' + (c.dataset.project || '') : 'none'; })()`); // the Preview button shares the small square look
-    report(!asleep.startsWith('true'), `a closed room's card has none (${asleep})`);
-    await page(`document.querySelector('.home-card[data-project="SampleApp"] .home-card-btn.more').click(); true`);
+    const extra = await page(`(() => { const c = document.querySelector('.home-card[data-project="SampleApp"]'); return c.querySelectorAll('.home-card-btn').length; })()`);
+    report(extra === 1, `SampleApp's card has only its Enter Room button, no arrow or Preview button (${extra})`);
+    await page(`(() => { const c = document.querySelector('.home-card[data-project="SampleApp"]'); const b = c.getBoundingClientRect(); c.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: b.left + 30, clientY: b.top + 20 })); return true; })()`);
     await sleep(1500);
     const items = await menuItems();
-    report(items.join('|') === 'New Room|Close Room 1 · Claude, Working|Close Room 2 · Codex, Needs you|Close Room 3 · Gemini, Done|Close All Rooms', `the arrow lists each room (${items.join('|')})`);
+    report(['Enter Room', 'Preview', 'New Room'].every((name) => items.some((item) => item.startsWith(name))) && items.filter((item) => item.startsWith('Close')).join('|') === 'Close Room 1 · Claude, Working|Close Room 2 · Codex, Needs you|Close Room 3 · Gemini, Done|Close All Rooms', `the card's right-click menu has Enter Room, Preview, New Room and each room to close (${items.join('|')})`);
     await shot('rooms-home-menu');
     await page(`[...document.querySelectorAll('#menu:not([hidden]) .menu-item')].find((m) => m.textContent.startsWith('Close Room 3')).click(); true`);
     await sleep(1000);

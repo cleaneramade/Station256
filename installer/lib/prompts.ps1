@@ -269,7 +269,7 @@ function Show-AnswerSummary {
     }
 
     Write-Line ''
-    Write-Wrapped "It will also install: Ubuntu Linux (as its own separate Linux, so any Linux you already have is left alone), Docker, Node.js and Claude Code inside the house. None of that touches your Windows programs." 'DarkGray' 3
+    Write-Wrapped "It will also install: Ubuntu Linux (as its own separate Linux, so any Linux you already have is left alone), Docker and Node.js inside the house. It installs no AI: you choose which AI tools you use, later, inside Station 256. None of that touches your Windows programs." 'DarkGray' 3
     Write-Line ''
 }
 

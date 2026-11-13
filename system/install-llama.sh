@@ -67,14 +67,15 @@ ln -sfn "$dest" "$BASE/current"
 ln -sfn "$BASE/current/llama-server" "$HOME/.local/bin/llama-server"
 echo "llama.cpp $TAG ($flavor) is ready: $(env -i HOME="$HOME" PATH=/usr/bin:/bin "$HOME/.local/bin/llama-server" --version 2>&1 | head -1)"
 
-# A model to chat with (2.5 GB, Apache-2.0), unless ~/models has one already. LLAMA_MODEL=none skips it.
+# No model is downloaded unless you ask: you bring your own .gguf file. LLAMA_MODEL=starter downloads one
+# small example (2.5 GB, Apache-2.0) when ~/models has none.
 # shortcut: fetched from the repo's newest copy, not a pinned revision; pin it if the file ever changes.
 MODEL_REPO=unsloth/Qwen3-4B-Instruct-2507-GGUF
 MODEL=Qwen3-4B-Instruct-2507-Q4_K_M.gguf
-if [ "${LLAMA_MODEL:-}" != none ] && ! compgen -G "$HOME/models/*.gguf" >/dev/null; then
+if [ "${LLAMA_MODEL:-}" = starter ] && ! compgen -G "$HOME/models/*.gguf" >/dev/null; then
   mkdir -p "$HOME/models"
   echo "Downloading the model $MODEL (2.5 GB)"
   curl -L --fail --progress-bar -o "$HOME/models/$MODEL.part" "https://huggingface.co/$MODEL_REPO/resolve/main/$MODEL"
   mv "$HOME/models/$MODEL.part" "$HOME/models/$MODEL" # only a whole download gets the real name
 fi
-echo "Local AI is ready. Open it in Station: the New menu, then Local AI."
+echo "Local AI is ready. Put a .gguf model in ~/models, then open it in Station: the New menu, then Local AI."

@@ -12,6 +12,7 @@
     Other switches:
         -Fresh                   forget saved progress and start over
         -Yes                     skip the final "Go ahead?" question
+        -Resume                  used by Windows to carry on by itself after the restart
         -DistroName <name>       the name of the Linux this installer makes (default Station256).
                                  Any other name is a try-out: it gets its own app folder, shortcut,
                                  login step and right-click menu, and leaves .wslconfig alone.
@@ -27,6 +28,8 @@ param(
     [switch]$CheckOnly,
     [switch]$Fresh,
     [switch]$Yes,
+    # Set by Windows itself when it carries on after the restart. Not for typing.
+    [switch]$Resume,
     [string]$DistroName = 'Station256',
     [string]$AppDir = ''
 )
@@ -163,7 +166,8 @@ $state.answers = $answers
 # user is made. A dry run needs none, so it does not ask.
 $pw = ''
 if ((-not (Test-PhaseDone -State $state -Phase 'user')) -and ((-not $DryRun) -or $AskOnly)) {
-    $pw = Read-LinuxPassword -UserName $answers['linuxUser']
+    if ($state.pwBlob) { $pw = Unprotect-Password -Blob $state.pwBlob }
+    if (-not $pw) { $pw = Read-LinuxPassword -UserName $answers['linuxUser'] }
 }
 
 # Answers are only saved on a real run. A try-out must not leave test answers
@@ -178,7 +182,7 @@ if ($AskOnly) {
     exit 0
 }
 
-if (-not $Yes) {
+if (-not ($Yes -or $Resume)) {
     if (-not (Confirm-YesNo "Go ahead?" $true)) {
         Write-Line ''
         Write-Info "Stopped. Nothing was changed. Your answers are saved for next time."
@@ -203,14 +207,22 @@ try {
     else {
         $r = Invoke-PhaseWsl -A $answers
         if ($r.rebootNeeded) {
+            if ($pw) { $state.pwBlob = Protect-Password -Plain $pw }
             Write-InstallState -State $state
-            Write-Banner "Restart needed"
-            Write-Wrapped "Windows has turned on the feature it needs, but it only takes effect after a restart." 'Gray' 3
-            Write-Line ''
-            Write-Line "   1. Restart your PC." 'White'
-            Write-Line "   2. Run this same command again." 'White'
+            Register-InstallResume -ScriptPath $PSCommandPath -DistroName $DistroName
+            Write-Banner "One restart needed"
+            Write-Wrapped "Windows has turned on the feature it needs. It only starts working after one restart. Nothing else is needed from you: when you sign back in, setup carries on by itself and finishes." 'Gray' 3
             Write-Line ''
             Write-Info "Your answers are saved. It will not ask them again."
+            Write-Line ''
+            if ((-not $Yes) -and (Confirm-YesNo "Restart now?" $true)) {
+                Write-Info "Restarting in a few seconds..."
+                Start-Sleep -Seconds 5
+                Restart-Computer -Force
+            }
+            else {
+                Write-Info "Restart when you are ready. Setup carries on after you sign back in."
+            }
             exit 0
         }
         if (-not $DryRun) { Set-PhaseDone -State $state -Phase 'wsl' }
@@ -224,6 +236,7 @@ try {
     else {
         Invoke-PhaseUser -A $answers -Password $pw
         $pw = $null
+        $state.pwBlob = ''
         if (-not $DryRun) { Set-PhaseDone -State $state -Phase 'user' }
     }
 
@@ -249,7 +262,7 @@ try {
 
     # --- packages ---
     if (Test-PhaseDone -State $state -Phase 'packages') {
-        Write-Step "Step 5 of 9: Node, git and Claude Code"
+        Write-Step "Step 5 of 9: Node and git"
         Write-Skip "Already done."
     }
     else {
@@ -311,6 +324,7 @@ catch {
 # Check the work
 # ---------------------------------------------------------------------------
 $result = Invoke-PhaseVerify -A $answers
+Unregister-InstallResume -DistroName $DistroName
 
 $mins = [math]::Round(((Get-Date) - $started).TotalMinutes, 1)
 
@@ -342,7 +356,7 @@ if ($result.todo.Count -gt 0) {
 }
 
 Write-Line ''
-Write-Wrapped "Open Station 256 from your Desktop or Start menu to begin. It starts empty. The first room you open will ask you to connect Claude." 'Gray' 3
+Write-Wrapped "Open Station 256 from your Desktop or Start menu to begin. It starts empty. It will ask which AI tools you use and set up only those." 'Gray' 3
 Write-Line ''
 $unArgs = ''
 if ($houseNames.isTest) { $unArgs = ' -DistroName ' + $DistroName }

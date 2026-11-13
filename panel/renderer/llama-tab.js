@@ -16,7 +16,7 @@ const llamaPage = {
   next: 1,
 };
 const llamaParts = {}; // the page's own pieces, filled by buildLlama
-const LLAMA_MISSING = 'Local AI uses llama.cpp, which isn\'t installed yet. To install it with a small model, open a House Terminal, type ~/house/system/install-llama.sh and press Enter. When it says it\'s ready, press Check again.';
+const LLAMA_MISSING = 'Local AI uses llama.cpp, which isn\'t installed yet. To install it, open a House Terminal, type ~/house/system/install-llama.sh and press Enter. You bring your own .gguf model (put it in ~/models). When it says it\'s ready, press Check again.';
 
 // One Local AI tab. Asking again goes back to it.
 function openLlama() {

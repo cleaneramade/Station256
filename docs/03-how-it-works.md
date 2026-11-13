@@ -444,15 +444,16 @@ computer with llama.cpp's own `llama-server` and chats with it.
   `~/.local/bin`, in `~/llama.cpp/build/bin`, or at a path saved in
   `~/.config/house/llama.json` (the page's own settings: model, context,
   GPU layers).
-- **Installed (2026-11-11)** by `system/install-llama.sh`, which the installer
-  runs too (step 6). It takes a pinned official release (`b12283`): the NVIDIA
+- **Optional, and not part of the installer.** You bring your own model. If you
+  want the program too, `system/install-llama.sh` fetches it. It takes a pinned official release (`b12283`): the NVIDIA
   CUDA build when `nvidia-smi` says the driver supports CUDA 13.5, otherwise
   the plain CPU one. No sudo: everything sits in
   `~/.local/share/llama.cpp/b12283-<cuda|cpu>/` (the `.so` files beside the
   program), `current` points at it, and `~/.local/bin/llama-server` links to
   it. It checks the program starts from a bare environment, as Station starts
   it, and falls back to the CPU build if the CUDA one won't. Safe to run again.
-- The model: `~/models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf` (2.5 GB, Apache-2.0,
+- The model: you bring your own. Nothing downloads one unless you run the script with
+  `LLAMA_MODEL=starter`, which fetches `~/models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf` (2.5 GB, Apache-2.0,
   from `unsloth/Qwen3-4B-Instruct-2507-GGUF`). Proven through the real
   `lib/llama.js`: found, started, answered, stopped. CPU: about 10 words a
   second; on the graphics card about 67.
@@ -571,23 +572,47 @@ Checked by `fitrun.sh` (its worst case now includes Preview): 7/7.
   folder). A choice you make is still remembered.
 - The song page's Track box hints "3 or 3/12".
 
+### Lock and the clipboard (2026-11-12)
+
+Lock on: nothing is copied between Linux and Windows in either direction;
+Linux to Linux and Windows to Windows are untouched. Copying in Station while
+locked stays in Station (a note says it's locked, and the Windows helper clears
+the copy if it reached Windows). Text, files and pictures copied in Windows are
+refused on paste, with a note and an Unlock button. The one exception is a
+**snip of Station itself** (Win + Shift + S on Station): when a picture appears
+in Windows' clipboard while locked, `lib/snip-match.js` compares it with a
+fresh picture of Station's own windows (a snip of Station shows only what
+Station already shows). Measured on the real screen: Windows shows Station
+1:1, a snip of Station matched with a difference of 0.0 and a snip of another
+app scored 54, so only an exact-size piece with a difference of 4 or less
+counts. If Windows ever draws Station larger, snips of Station are refused with
+the note: the safe way to fail. Unit check: `test/snip-match.test.js`.
+
 ### Web Browser, the built-in browser (2026-11-10)
 
 Called **Web Browser** everywhere you can see it (renamed from "Obscura" on
 2026-11-11; the code, file names and the `persist:obscura` session keep the old
-name, so sign-ins made in it are kept). A new tab shows Station's logo, "Station
-256 Web Browser" and what to do. A tab that is all web page. One slim bar has Back, Forward, Reload, the
-address, and on the right the project the page belongs to, which AI is
-using it (when one is), and **Open in browser** (hands the page to Windows'
-own browser). Station's sidebar, folder header and status bar are hidden while
-it's in front, and come back exactly as they were.
+name, so sign-ins made in it are kept). Its page is Electron's Chromium
+`<webview>`; everything around it is Station's own. A tab is all web page. One
+bar has Back, Forward, Reload, the address (with a **star** to bookmark the
+page, Ctrl+D), **Bookmarks**, **History** (Ctrl+H), **New browser tab**
+(Ctrl+T) and the page's zoom (per tab, 100% = how a normal browser shows it).
+Bookmarks and History are lists under the bar (search, remove one, clear) and
+are kept in the settings (`prefs.bookmarks`, `prefs.history`: newest first, 300
+and 400 at most), on this computer only. History leaves out local addresses and
+AI or Preview pages. A new tab's start page has a search box, the bookmarks (or
+the most visited sites until there are some) and the last pages visited.
+Links never open Windows' browser. An AI at work shows as a strip above the
+page, a glow round it and its own named cursor (`lib/ai-browser.js` waits for
+the cursor before it clicks). Station's sidebar, folder header and status bar
+are hidden while it's in front, and come back exactly as they were.
 
 - The page is a `<webview>` in its own session (`persist:obscura`), with no
   Node, no Station files (`house-file:` isn't there), no camera, microphone,
   location, clipboard reading, Bluetooth/USB, or file-system pickers.
 - Downloads go only to Downloads with safe names (no overwriting). At most 10
   downloads every 10 s, 3 new tabs every 5 s, and 20 page-opened tabs in all.
-- Keys like Ctrl+T/Ctrl+W work as in the rest of Station. Ctrl+plus zooms the
+- Ctrl+T opens a new browser tab, Ctrl+W closes the tab. Ctrl+plus zooms the
   page, not Station.
 - `lib/obscura.js`, `renderer/obscura-tab.js`. Checked by the `obscura` and
   `obscuraAttacks` scenes (every way out of the tab, tried against a hostile

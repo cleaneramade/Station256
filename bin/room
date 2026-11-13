@@ -26,6 +26,9 @@ EDITS="$HOME/.local/state/house/edits"
 # requests into in/, Station answers in out/, which the room can only read.
 BROWSER="$HOME/.local/state/house/browser"
 HERDR="$HOME/.local/bin/herdr"
+# Which AI tools go into the room blueprint: one line, like claude,codex. Written by Station 256
+# (House Rules > Your AI tools) or by "room ai set". No file, or an empty one, means none.
+AI_FILE="$HOME/.config/house/ai-tools"
 
 usage() {
   cat <<'EOF'
@@ -42,7 +45,9 @@ room list         show projects and which rooms are up
 room agents       open Herdr with every project listed, open rooms live
 room agents --ready   only update that list
 room status       show why the house is awake
-room login        connect Claude for all rooms (one time)
+room ai            show which AI tools the rooms have
+room ai set LIST   choose them, like: room ai set claude,codex  (then: room build)
+room login        connect Claude for all rooms (one time, if you use Claude)
 room build        rebuild the room blueprint
 EOF
 }
@@ -259,9 +264,25 @@ ensure_image() {
     need=1
     echo "Updating the room blueprint. This happens once and takes a few minutes."
   fi
-  if [ "$need" = 1 ]; then
-    docker build -t "$IMAGE" --build-arg HOUSE_PUBKEY="$(cat "$HOUSE_KEY.pub")" "$BLUEPRINT"
+  # A blueprint made before AI tools could be chosen has no label: it is left as it is until you choose.
+  if [ "$need" = 0 ] && [ -f "$AI_FILE" ] \
+    && [ "$(docker image inspect "$IMAGE" -f '{{index .Config.Labels "house.ai"}}' 2>/dev/null)" != "$(ai_wanted)" ]; then
+    need=1
+    echo "Updating the room blueprint with your AI tools. This takes a few minutes."
   fi
+  if [ "$need" = 1 ]; then
+    docker build -t "$IMAGE" --build-arg HOUSE_PUBKEY="$(cat "$HOUSE_KEY.pub")" --build-arg AI_TOOLS="$(ai_wanted)" "$BLUEPRINT"
+  fi
+}
+
+# The AI tools the blueprint should have: a clean comma list, known names only.
+ai_wanted() {
+  local list="" name
+  [ -f "$AI_FILE" ] || return 0
+  for name in claude codex gemini; do
+    case ",$(tr -d ' \n' < "$AI_FILE")," in *,"$name",*) list="${list:+$list,}$name" ;; esac
+  done
+  printf '%s' "$list"
 }
 
 is_up() {
@@ -809,7 +830,22 @@ case "$cmd" in
     ;;
   build)
     ensure_house_key
-    docker build -t "$IMAGE" --build-arg HOUSE_PUBKEY="$(cat "$HOUSE_KEY.pub")" "$BLUEPRINT"
+    docker build -t "$IMAGE" --build-arg HOUSE_PUBKEY="$(cat "$HOUSE_KEY.pub")" --build-arg AI_TOOLS="$(ai_wanted)" "$BLUEPRINT"
+    ;;
+  ai)
+    if [ "${2:-}" = set ]; then
+      list="${3:-}"
+      for name in $(printf '%s' "$list" | tr ',' ' '); do
+        case "$name" in claude|codex|gemini) ;; *) echo "Unknown AI tool: $name (use claude, codex, gemini)" >&2; exit 1 ;; esac
+      done
+      mkdir -p "$(dirname "$AI_FILE")"
+      printf '%s\n' "$list" > "$AI_FILE"
+      echo "Saved. Run: room build"
+    elif [ ! -f "$AI_FILE" ]; then
+      echo "No AI tools chosen yet. Choose with: room ai set claude,codex,gemini (any of them)"
+    else
+      echo "AI tools in rooms: $(ai_wanted)"
+    fi
     ;;
   *)
     usage

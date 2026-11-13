@@ -201,7 +201,16 @@ export function SectionFields({
 	className?: string;
 }) {
 	return (
-		<div className={cn("flex flex-col gap-3.5", className)}>{children}</div>
+		// Station 256: settings sit side by side where the panel is wide enough (two or more per row),
+		// and stack when it is narrow.
+		<div
+			className={cn(
+				"grid grid-cols-2 gap-x-3 gap-y-3.5",
+				className,
+			)}
+		>
+			{children}
+		</div>
 	);
 }
 

@@ -26,7 +26,8 @@ rm -rf "$FAKE"
 mkdir -p "$FAKE/out" "$FAKE/.config/house" "$FAKE/.local/state/house" "$FAKE/.local/bin"
 # SHOT_EMPTY=1: no projects at all.
 mkdir -p "$FAKE/projects"
-[ -n "${SHOT_EMPTY:-}" ] || for name in "Notes App" "Docs Site" SampleApp; do mkdir -p "$FAKE/projects/$name"; done
+[ -n "${SHOT_EMPTY:-}" ] || IFS=, read -ra names <<< "${SHOT_PROJECTS:-Notes App,Docs Site,SampleApp}"
+for name in "${names[@]}"; do mkdir -p "$FAKE/projects/$name"; done
 for name in Documents Pictures Music Videos Downloads; do mkdir -p "$FAKE/$name"; done
 [ -n "${SHOT_EMPTY:-}" ] || echo notes > "$FAKE/projects/readme.md"
 # A made-up room log in the same shape as the real one, so the Activity list has both kinds of line:

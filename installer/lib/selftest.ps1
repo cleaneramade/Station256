@@ -327,6 +327,16 @@ try {
     $back = Read-InstallState
     Check 'finished steps are read back' (Test-PhaseDone -State $back -Phase 'wsl')
     Check 'unfinished steps are not'     (-not (Test-PhaseDone -State $back -Phase 'rooms'))
+
+    # The one restart: the password is kept only as a Windows-protected blob, and read back.
+    $blob = Protect-Password -Plain 'SUPERSECRET123'
+    Check 'restart: the protected password is not the password' ($blob -notmatch 'SUPERSECRET123')
+    Check 'restart: the protected password reads back'          ((Unprotect-Password -Blob $blob) -eq 'SUPERSECRET123')
+    $s2 = @{ answers = @{ linuxUser = 'tester' }; done = @(); version = 1; pwBlob = $blob }
+    Write-InstallState -State $s2
+    $onDisk2 = Get-Content $realPath -Raw
+    Check 'restart: plain password is still never on disk'      ($onDisk2 -notmatch 'SUPERSECRET123')
+    Check 'restart: the protected copy is read back'            ((Read-InstallState).pwBlob -eq $blob)
 }
 finally {
     # Put the user's real file back exactly as it was.
@@ -340,6 +350,16 @@ finally {
     Remove-Item (Get-HouseNames).appDir -Recurse -Force -ErrorAction SilentlyContinue
     Set-HouseDistro -Name 'Station256'
 }
+
+# ---------------------------------------------------------------------------
+Write-Host ''
+Write-Host '  What the installer promises' -ForegroundColor White
+$all = ''
+foreach ($f in @('install.ps1','lib\phases.ps1','lib\prompts.ps1')) { $all += (Get-Content (Join-Path $root $f) -Raw) }
+Check 'installs no AI tool (no Claude install line)'    ($all -notmatch 'claude\.ai/install')
+Check 'downloads no local model (no llama installer)'   ($all -notmatch 'install-llama')
+Check 'a restart registers one automatic carry-on'      ($all -match 'Register-InstallResume')
+Check 'the answers are not asked again after the restart' ($all -match '\$Resume')
 
 # ---------------------------------------------------------------------------
 # Result

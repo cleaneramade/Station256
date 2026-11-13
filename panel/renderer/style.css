@@ -898,6 +898,10 @@ html.col-sizing, html.col-sizing * { cursor: col-resize !important; }
 .rules-chip { min-width: 44px; padding: 2px 8px; border-radius: 4px; background: var(--bar); color: var(--text); font-weight: 600; text-align: center; }
 .rules-group { margin: 24px 0 4px; font-size: 14px; font-weight: 600; color: var(--text); }
 .rules-note { margin: 2px 0 8px; color: var(--text-muted); }
+.ai-tool { cursor: pointer; }
+.ai-tool input { width: 18px; height: 18px; accent-color: var(--accent, #0f6cbd); }
+.ai-tools-foot { display: flex; align-items: center; gap: 14px; padding: 12px 0 4px; border-top: 1px solid var(--line); }
+.ai-tools-status { color: var(--muted, #616161); font-size: 13px; }
 .rule { display: flex; align-items: center; justify-content: space-between; gap: 24px; min-height: 56px; padding: 8px 0; border-top: 1px solid var(--line); }
 .rule-text { min-width: 0; }
 .rule-label { color: var(--text); font-weight: 600; }
@@ -1734,8 +1738,6 @@ html.docking .app { opacity: 0; }
 .home-card-note { min-height: 16px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--text-muted); }
 .home-card-buttons { display: flex; align-self: flex-start; gap: 4px; margin-top: 8px; }
 .home-card-btn { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px 4px 8px; border: 1px solid var(--line-bar); border-radius: 4px; background: var(--field); }
-.home-card-btn.more { align-self: stretch; padding: 4px 6px; }
-.home-card-btn.more i[data-i] { width: 12px; height: 12px; }
 .home-card-btn:hover { background: var(--hover); }
 .home-card-btn:active { background: var(--press); }
 /* An open room's Enter Room: filled in light green, so it reads as live. Its words stay regular,
@@ -1943,7 +1945,6 @@ html.docking .app { opacity: 0; }
 .llama-view .btn.primary:disabled { opacity: 0.5; }
 /* One-click Preview (preview.js): an icon-only button after the room button(s) on Home's cards. */
 .preview-btn { position: relative; }
-.home-card-btn.more.preview-btn i[data-i] { width: 14px; height: 14px; }
 /* Starting: the icon makes way for a turning ring. */
 .preview-btn.busy { cursor: progress; }
 .preview-btn.busy i[data-i] { visibility: hidden; }
@@ -2008,16 +2009,16 @@ html.docking .app { opacity: 0; }
 .sch-result { margin-top: 1px; }
 /* ---------- Obscura, the web browser tab (obscura-tab.js) ---------- */
 .ob-host { position: relative; background: var(--surface); container-type: inline-size; } /* a container, so a narrow Station window (not a narrow screen) drops the chips, below */
-.ob-bar { flex: none; display: flex; align-items: center; height: 32px; padding: 0 4px; gap: 2px; background: var(--bar); border-bottom: 1px solid var(--line-bar); }
-.ob-field { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; height: 24px; margin: 0 6px; padding: 0 10px; border-radius: 15px; background: var(--field); border: 1px solid var(--line-bar); }
+.ob-bar { position: relative; flex: none; display: flex; align-items: center; height: 38px; padding: 0 6px; gap: 3px; background: var(--bar); border-bottom: 1px solid var(--line-bar); }
+.ob-field { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; height: 28px; margin: 0 6px; padding: 0 6px 0 12px; border-radius: 16px; background: var(--field); border: 1px solid var(--line-bar); }
 .ob-field:focus-within { border-color: var(--blue); }
-.ob-address { flex: 1; min-width: 0; border: 0; outline: 0; background: none; color: var(--text-chrome); font: inherit; font-size: 13px; user-select: text; }
+.ob-address { flex: 1; min-width: 0; border: 0; outline: 0; background: none; color: var(--text-chrome); font: inherit; font-size: 14px; user-select: text; }
 .ob-lock { flex: none; width: 15px; height: 15px; color: var(--green); }
 .ob-lock.insecure { color: var(--orange); }
 .ob-load { flex: none; position: relative; height: 3px; overflow: hidden; background: var(--line); }
 .ob-load::after { content: ''; position: absolute; top: 0; bottom: 0; width: 35%; background: var(--blue); animation: ob-slide 1.1s ease-in-out infinite; }
 @keyframes ob-slide { from { left: -35%; } to { left: 100%; } }
-.ob-note { flex: none; padding: 6px 14px; background: var(--view-on); border-bottom: 1px solid var(--view-on-edge); color: var(--text-status); font-size: 13px; user-select: text; }
+.ob-note { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 3; max-width: min(560px, 90%); padding: 8px 16px; border-radius: 18px; background: rgba(32, 32, 32, 0.92); color: #fff; font-size: 13px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3); user-select: text; }
 .ob-find { flex: none; display: flex; align-items: center; gap: 4px; padding: 4px 10px; background: var(--bar); border-bottom: 1px solid var(--line-bar); }
 .ob-find-input { width: 240px; height: 28px; padding: 0 8px; border: 1px solid var(--line-bar); border-radius: 4px; background: var(--field); color: var(--text-chrome); font: inherit; font-size: 13px; user-select: text; }
 .ob-find-count { min-width: 70px; padding: 0 6px; color: var(--text-muted); font-size: 12px; }
@@ -2030,9 +2031,9 @@ html.docking .app { opacity: 0; }
 .ob-message-title { margin: 0; font-size: 20px; font-weight: 600; color: var(--text-chrome); }
 .ob-message-text { margin: 0; max-width: 460px; font-size: 14px; color: var(--text-muted); user-select: text; }
 .ob-home { justify-content: flex-start; overflow-y: auto; }
-.ob-home-inner { display: flex; flex-direction: column; align-items: center; gap: 22px; width: 100%; max-width: 680px; margin: auto; }
-.ob-home .ob-logo { width: 64px; height: 64px; margin: 0; }
-.ob-home-search { box-sizing: border-box; width: 100%; height: 46px; padding: 0 18px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--text-chrome); font: inherit; font-size: 16px; outline: none; }
+.ob-home-inner { display: flex; flex-direction: column; align-items: center; gap: 24px; width: 100%; max-width: 760px; padding: 24px 0; margin: auto; }
+.ob-home .ob-logo { width: 76px; height: 76px; margin: 0; }
+.ob-home-search { box-sizing: border-box; width: 100%; height: 52px; padding: 0 18px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--text-chrome); font: inherit; font-size: 16px; outline: none; }
 .ob-home-search:focus { border-color: var(--blue); box-shadow: 0 0 0 2px var(--blue); }
 .ob-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 10px; width: 100%; }
 .ob-tile { position: relative; min-width: 0; }
@@ -2050,7 +2051,38 @@ html.docking .app { opacity: 0; }
    System panel and status bar are only hidden (never rebuilt), so every other tab shows them again
    exactly as they were: sidebar width, collapsed state, details pane. One class on the body, set in
    activateTab. */
-.ob-bar .tool { width: 28px; height: 26px; margin: 0; }
+.ob-bar .tool { width: 32px; height: 30px; margin: 0; }
+.ob-bar .tool i[data-i] { width: 17px; height: 17px; }
+@container (max-width: 760px) { .ob-bar .ob-extra { display: none; } .ob-zoom .tool { width: 22px; } .ob-zoom-level { min-width: 40px; } }
+.ob-star { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border-radius: 50%; color: var(--text-muted); }
+.ob-star[hidden] { display: none; }
+.ob-star:hover { background: var(--hover); color: var(--text-chrome); }
+.ob-star.on { color: #d97757; }
+.ob-star i[data-i] { width: 16px; height: 16px; }
+/* Bookmarks and History: a panel under the bar, on the right. */
+.ob-pop { position: absolute; top: 40px; right: 8px; z-index: 8; display: flex; flex-direction: column; width: 400px; max-width: calc(100% - 16px); max-height: min(70vh, 460px); border: 1px solid var(--line); border-radius: 10px; background: var(--surface); box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22); overflow: hidden; }
+.ob-pop-head { flex: none; display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.ob-pop-head strong { font-size: 14px; }
+.ob-pop-search { flex: 1; min-width: 0; height: 26px; padding: 0 10px; border: 1px solid var(--line); border-radius: 13px; background: var(--field); color: var(--text-chrome); font: inherit; font-size: 13px; outline: 0; }
+.ob-pop-search:focus { border-color: var(--blue); }
+.ob-pop-clear { flex: none; padding: 3px 8px; border-radius: 6px; color: var(--text-muted); font-size: 12px; }
+.ob-pop-clear:hover { background: var(--hover); color: var(--text-chrome); }
+.ob-pop-list { overflow-y: auto; padding: 4px; }
+.ob-pop-row { display: flex; align-items: center; border-radius: 6px; }
+.ob-pop-row:hover { background: var(--row-hover-soft); }
+.ob-pop-go, .ob-recent-row { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 6px 10px; text-align: left; color: var(--text-chrome); }
+.ob-pop-title { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; }
+.ob-pop-host { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); font-size: 12px; }
+.ob-pop-x { flex: none; width: 26px; height: 26px; margin-right: 4px; border-radius: 50%; color: var(--text-muted); font-size: 16px; opacity: 0; }
+.ob-pop-row:hover .ob-pop-x, .ob-pop-x:focus-visible { opacity: 1; }
+.ob-pop-x:hover { background: var(--hover); color: var(--text-chrome); }
+.ob-pop-empty { padding: 22px 14px; color: var(--text-muted); font-size: 13px; text-align: center; }
+.ob-home-label { align-self: flex-start; margin-bottom: -10px; color: var(--text-muted); font-size: 12.5px; font-weight: 600; letter-spacing: 0.02em; }
+.ob-recent { display: flex; flex-direction: column; gap: 2px; width: 100%; }
+.ob-recent:empty { display: none; }
+.ob-recent-row { flex-direction: row; align-items: baseline; gap: 12px; border-radius: 6px; }
+.ob-recent-row:hover { background: var(--row-hover-soft); }
+.ob-recent-row .ob-pop-title { flex: 0 1 auto; }
 .ob-chip { flex: none; max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 8px; border-radius: 10px; background: var(--nav-selected); color: var(--text-muted); font-size: 12px; }
 .ob-chip.set { background: var(--view-on); color: var(--text-status); }
 .ob-chip-agent { background: var(--row-selected); color: var(--text-status); }
@@ -2058,8 +2090,6 @@ html.docking .app { opacity: 0; }
 /* An AI using the page (lib/ai-browser.js): Stop takes it back; the dot shows where it clicks. */
 .ob-ai-stop { flex: none; height: 26px; padding: 0 10px; border-radius: 4px; background: var(--danger, #c42b1c); color: #fff; font-size: 12px; font-weight: 600; }
 .ob-ai-stop[hidden] { display: none; }
-.ob-ai-dot { position: absolute; left: 0; top: 0; width: 18px; height: 18px; margin: -9px 0 0 -9px; border: 2px solid #fff; border-radius: 50%; background: rgba(0, 120, 212, 0.75); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4); pointer-events: none; transition: transform 0.25s ease-out; z-index: 2; }
-.ob-ai-dot[hidden] { display: none; }
 .ob-outside { flex: none; display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 8px; border-radius: 4px; color: var(--text-chrome); font-size: 12px; white-space: nowrap; }
 .ob-outside:hover { background: var(--hover); }
 .ob-outside:active { background: var(--press); }
@@ -2072,7 +2102,37 @@ body.obscura-front .systempane,
 body.obscura-front .main > .statusbar { display: none; }
 body.obscura-front .main { grid-template-rows: minmax(0, 1fr); }
 body.obscura-front .app { grid-template-rows: 40px minmax(0, 1fr); } /* the hidden bars' rows go too, or the page would slide up into one */
-@container (max-width: 760px) { .ob-chip { display: none; } .ob-outside span { display: none; } }
+@container (max-width: 760px) { .ob-outside span { display: none; } }
+.doc-area { position: relative; }
+.doc-area.split { flex-direction: row; }
+.snap-zones { position: absolute; inset: 0; z-index: 6; display: flex; pointer-events: none; }
+.snap-zones[hidden] { display: none; }
+.snap-zone { flex: 1; display: flex; align-items: center; justify-content: center; margin: 8px; border: 2px dashed transparent; border-radius: 10px; color: transparent; font-size: 15px; font-weight: 600; transition: background 0.12s, border-color 0.12s; }
+.snap-zone.on { border-color: var(--blue); background: rgba(0, 120, 212, 0.18); color: var(--text-chrome); }
+.doc-area.split > .doc-host:not([hidden]) { flex: 1 1 0; min-width: 0; }
+.doc-area.split > .doc-host:not([hidden]) + .doc-host:not([hidden]) { border-left: 2px solid var(--line-bar); }
+/* The page's zoom, where the project's name used to be. */
+.ob-zoom { flex: none; display: flex; align-items: center; height: 28px; border-radius: 14px; background: var(--field); border: 1px solid var(--line-bar); }
+.ob-zoom .tool { width: 28px; height: 26px; margin: 0; border-radius: 13px; }
+.ob-zoom .tool i[data-i] { width: 13px; height: 13px; }
+.ob-zoom-level { min-width: 48px; height: 26px; padding: 0 2px; border-radius: 13px; color: var(--text-chrome); font-size: 13px; font-variant-numeric: tabular-nums; }
+.ob-zoom-level:hover { background: var(--hover); }
+.ob-bar .tool.on { background: var(--view-on); color: var(--text-status); }
+/* An AI at work: a small banner over the top of the page, with a soft edge, only while it moves. */
+.ob-ai-banner { flex: none; display: flex; align-items: center; gap: 10px; height: 28px; padding: 0 8px 0 12px; background: #2b1f1a; color: #fff; font-size: 12.5px; border-bottom: 1px solid #d97757; }
+.ob-ai-banner[hidden] { display: none; }
+.ob-ai-spacer { flex: 1; }
+.ob-ai-pulse { width: 8px; height: 8px; border-radius: 50%; background: #d97757; animation: ob-pulse 1.4s ease-in-out infinite; }
+.ob-ai-banner .ob-ai-stop { height: 20px; padding: 0 12px; border-radius: 10px; font-size: 12px; }
+@keyframes ob-pulse { 50% { opacity: 0.35; } }
+.ob-ai-glow { position: absolute; inset: 0; z-index: 2; pointer-events: none; box-shadow: inset 0 0 0 2px rgba(217, 119, 87, 0.85), inset 0 0 26px 4px rgba(217, 119, 87, 0.45); animation: ob-glow 2.4s ease-in-out infinite; }
+.ob-ai-glow[hidden] { display: none; }
+@keyframes ob-glow { 50% { box-shadow: inset 0 0 0 2px rgba(217, 119, 87, 0.6), inset 0 0 40px 8px rgba(217, 119, 87, 0.3); } }
+.ob-ai-cursor { position: absolute; left: 0; top: 0; z-index: 4; width: 22px; height: 22px; pointer-events: none; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.4)); }
+.ob-ai-cursor[hidden] { display: none; }
+.ob-ai-name { position: absolute; left: 16px; top: 18px; padding: 1px 7px; border-radius: 8px; background: #d97757; color: #fff; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.ob-ai-ring { position: absolute; left: 0; top: 0; z-index: 3; width: 28px; height: 28px; border: 2px solid #d97757; border-radius: 50%; pointer-events: none; opacity: 0; }
+.ob-ai-ring[hidden] { display: none; }
 /* ---------- Search "All folders inside" (search.js) ---------- */
 
 .search-scope { display: grid; flex: none; place-items: center; width: 20px; height: 20px; margin: 0 4px 0 6px; border-radius: 4px; color: var(--text-chrome); }

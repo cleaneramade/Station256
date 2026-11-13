@@ -16,6 +16,7 @@ import { MigrationDialog } from "@/project/components/migration-dialog";
 import { usePanelStore } from "@/editor/panel-store";
 import { usePasteMedia } from "@/media/use-paste-media";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import type { ImperativePanelGroupHandle } from "react-resizable-panels";
 import { importFromHouse } from "@/station/import";
 import { useEditor } from "@/editor/use-editor";
 import { Cancel01Icon } from "@hugeicons/core-free-icons";
@@ -105,6 +106,16 @@ function EditorLayout() {
 	const setOverlayVisibility = usePreviewStore(
 		(state) => state.setOverlayVisibility,
 	);
+	// Station 256: the timeline is as tall as its tracks need (a short strip with one track) and
+	// grows when a track is added, so the preview keeps the room. Dragging the divider still works.
+	const rowsGroup = useRef<ImperativePanelGroupHandle>(null);
+	const trackCount = activeScene
+		? activeScene.tracks.overlay.length + 1 + activeScene.tracks.audio.length
+		: 1;
+	useEffect(() => {
+		const timelineSize = Math.min(65, 28 + 9 * trackCount);
+		rowsGroup.current?.setLayout([100 - timelineSize, timelineSize]);
+	}, [trackCount]);
 	const showBookmarkNotes = isPreviewOverlayVisible({
 		overlay: bookmarkNotesPreviewOverlay,
 		overlays,
@@ -142,6 +153,7 @@ function EditorLayout() {
 
 	return (
 		<ResizablePanelGroup
+			ref={rowsGroup}
 			direction="vertical"
 			className="size-full gap-[0.18rem]"
 			onLayout={(sizes) => {

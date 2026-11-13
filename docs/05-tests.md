@@ -44,6 +44,8 @@ time (`flock /tmp/station-shot-slot-1.lock ...`).
 - `auditSong` — MP3, FLAC and M4A read back with ffprobe; odd Track and Year input
 - `auditPicture` — turn, crop, Undo, save; video trim
 - `auditBrowser` — start page, search, Back/Forward, Find, failed pages, no "Obscura" wording
+- `node panel/test/snip-match.test.js` — a snip of Station is recognised, anything else is not
+- `node panel/test/ai-tools.test.js` — your AI tools choice is saved in a fixed order, an unknown name is refused, and the room blueprint installs only what is chosen
 - `searchInside` also covers "Words inside files": finds words in text files, skips binary, hidden, node_modules and key files, treats shell characters as plain text
 - `auditActions` — New, Rename, Delete, Undo, Trash restore, Properties, Zip/Extract, search
 - `auditEditorBrand` — no "OpenCut" in the video editor tab

@@ -260,7 +260,7 @@ function start(deps) {
     const zoom = guest.getZoomFactor();
     const x = Math.round(spot.x * zoom);
     const y = Math.round(spot.y * zoom);
-    pointer(guest, x, y);
+    await pointer(guest, x, y, 'click');
     guest.sendInputEvent({ type: 'mouseMove', x, y });
     guest.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
     guest.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
@@ -276,7 +276,7 @@ function start(deps) {
       const chose = await run(guest, CHOOSE(n, text));
       if (chose.error) return no(chose.error);
     } else {
-      pointer(guest, Math.round(spot.x * guest.getZoomFactor()), Math.round(spot.y * guest.getZoomFactor()));
+      await pointer(guest, Math.round(spot.x * guest.getZoomFactor()), Math.round(spot.y * guest.getZoomFactor()), 'type');
       guest.focus();
       guest.insertText(text);
       await new Promise((resolve) => { setTimeout(resolve, 60); });
@@ -296,9 +296,14 @@ function start(deps) {
     guest.sendInputEvent({ type: 'keyUp', keyCode });
   }
 
-  function pointer(guest, x, y) {
+  // Tells the tab where the AI is about to act (its cursor glides there) and what it's doing. The
+  // action then waits a moment, so what the owner sees is what happens, not the other way round.
+  const ARRIVE_MS = 450;
+  async function pointer(guest, x, y, doing) {
     const host = guest.hostWebContents;
-    if (host && !host.isDestroyed()) host.send('aibrowser:pointer', { id: guest.id, x, y });
+    if (!host || host.isDestroyed()) return;
+    host.send('aibrowser:pointer', { id: guest.id, x, y, doing });
+    await new Promise((resolve) => { setTimeout(resolve, ARRIVE_MS); });
   }
 
   async function shot(guest, out, id) {

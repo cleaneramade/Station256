@@ -22,7 +22,10 @@ ENV PATH=/home/dev/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:
 ENV CLAUDE_CONFIG_DIR=/home/dev/.claude
 ENV DISABLE_AUTOUPDATER=1
 
-RUN curl -fsSL https://claude.ai/install.sh | bash \
+# The AI tools are the ones you chose (Station 256 > House Rules > Your AI tools), as a
+# comma list: claude,codex,gemini. None is installed unless it is on the list.
+ARG AI_TOOLS=""
+RUN case ",$AI_TOOLS," in *,claude,*) curl -fsSL https://claude.ai/install.sh | bash ;; esac \
  && rm -rf /home/dev/.claude /home/dev/.claude.json \
  && mkdir -p /home/dev/.claude
 
@@ -32,13 +35,15 @@ RUN curl -fsSL https://herdr.dev/install.sh | sh
 # The same light look as the house, for Herdr run from a room's own terminal.
 COPY --chown=dev:dev herdr-config.toml /home/dev/.config/herdr/config.toml
 
-# The other two agent programs, so panes can run them side by side. Pinned to
-# the versions the house rules were checked against (panel/lib/ai-rules.js), so
-# a rebuild never changes them by surprise. Move them up on purpose, then check
-# the rules again.
-RUN npm config set prefix /home/dev/.local \
- && npm install -g --no-fund --no-audit @openai/codex@0.167.0 @google/gemini-cli@0.67.0 \
- && npm cache clean --force
+# Codex and Gemini, only when chosen. Pinned to the versions the house rules were checked
+# against (panel/lib/ai-rules.js), so a rebuild never changes them by surprise. Move them up
+# on purpose, then check the rules again.
+RUN set -e; npm config set prefix /home/dev/.local; pkgs=""; \
+    case ",$AI_TOOLS," in *,codex,*) pkgs="$pkgs @openai/codex@0.167.0" ;; esac; \
+    case ",$AI_TOOLS," in *,gemini,*) pkgs="$pkgs @google/gemini-cli@0.67.0" ;; esac; \
+    if [ -n "$pkgs" ]; then npm install -g --no-fund --no-audit $pkgs; fi; \
+    npm cache clean --force
+LABEL house.ai="$AI_TOOLS"
 # Graphify (github.com/Graphify-Labs/graphify), the owner's pick: turns a project into a map of
 # how its code fits together, so Claude finds things without reading file after file. Code is
 # mapped on this PC, with no account and no AI calls. uv installs it in the room user's own

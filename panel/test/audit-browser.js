@@ -80,9 +80,9 @@ module.exports = {
       report(/of 2/.test(count || ''), `Find in page counts matches: "${count}"`);
       await shot('audit-browser-find');
 
-      // Open in the Windows browser: the button is there, and only for web pages.
-      const outside = await active(`[t.outside.textContent, t.outside.dataset.tip || t.outside.title]`);
-      report(/Open in browser/.test(outside[0]) && /Windows/.test(outside[1]), `the button says "${outside[0]}", tooltip "${outside[1]}"`);
+      // Nothing opens Windows' own browser: there is no such button.
+      const outside = await active(`document.querySelectorAll('.ob-outside').length`);
+      report(outside === 0, `no "Open in browser" button in the Web Browser (${outside})`);
 
       // A page that can't be reached, and a missing page.
       await go('http://localhost:39998/');

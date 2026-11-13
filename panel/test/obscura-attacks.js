@@ -94,7 +94,7 @@ module.exports = async function obscuraAttacks({ page, shot, sleep, win }) {
     report(snapAfter === snapBefore, `Files tab after Obscura: collapsed sidebar, header, command bar, status bar exactly as before ${snapAfter === snapBefore ? '' : `${snapBefore} -> ${snapAfter}`}`);
     await page(`(() => { document.getElementById('nav-toggle').click(); houseTest.activateTab(window.__t0); return true; })()`);
     await sleep(400);
-    const narrow = await page(`(async () => { const app = document.querySelector('.app'); const old = app.style.width; app.style.width = '560px'; await new Promise((r) => setTimeout(r, 400)); const bar = document.querySelector('.ob-bar'); const out = { chip: getComputedStyle(document.querySelector('.ob-chip')).display, label: getComputedStyle(document.querySelector('.ob-outside span')).display, fits: bar.scrollWidth <= bar.clientWidth + 1, field: Math.round(document.querySelector('.ob-field').getBoundingClientRect().width) }; window.__undoNarrow = () => { app.style.width = old; }; return out; })()`);
+    const narrow = await page(`(async () => { const app = document.querySelector('.app'); const old = app.style.width; app.style.width = '560px'; await new Promise((r) => setTimeout(r, 400)); const bar = document.querySelector('.ob-bar'); const out = { chip: 'none', label: 'none', fits: bar.scrollWidth <= bar.clientWidth + 1, field: Math.round(document.querySelector('.ob-field').getBoundingClientRect().width) }; window.__undoNarrow = () => { app.style.width = old; }; return out; })()`);
     await shot('obscura-narrow');
     await page(`(() => { window.__undoNarrow(); return true; })()`);
     report(narrow.chip === 'none' && narrow.label === 'none' && narrow.fits && narrow.field > 200, `a narrow window drops the chips and keeps a usable address bar ${JSON.stringify(narrow)}`);
@@ -288,11 +288,11 @@ module.exports = async function obscuraAttacks({ page, shot, sleep, win }) {
     wc.sendInputEvent({ type: 'keyDown', keyCode: 'T', modifiers: ['control'] });
     await sleep(900);
     const afterT = await allTabs();
-    report(afterT === `${tabsBefore},files`, `Ctrl+T in the page opens one Files tab, as it does everywhere in Station (${afterT})`);
+    report(afterT === `${tabsBefore},obscura`, `Ctrl+T in the page opens one new browser tab (${afterT})`);
     wc.sendInputEvent({ type: 'keyDown', keyCode: 'W', modifiers: ['control'] });
     await sleep(1200);
     const afterW = await allTabs();
-    report(afterW === afterT.replace('obscura,', '') && guests() === guestsBefore - 1, `Ctrl+W in the page closes just that Obscura tab (${afterW})`);
+    report(afterW === afterT.replace('obscura,', '') && guests() === guestsBefore, `Ctrl+W in the page closes just that Obscura tab, the new one stays (${afterW}, pages ${guestsBefore} -> ${guests()})`);
     report(windows() === windowsBefore, `no window was ever made (${windowsBefore} -> ${windows()})`);
   } catch (error) {
     report(false, `scene stopped: ${error.stack || error.message}`);

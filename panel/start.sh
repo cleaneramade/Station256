@@ -18,7 +18,7 @@ ENTRY="[Desktop Entry]
 Type=Application
 Name=Station 256
 Exec=$PWD/start.sh
-Icon=$PWD/assets/station-256.png
+Icon=$PWD/assets/station-256-icon.png
 StartupWMClass=station-256"
 if [ -n "$WAYLAND" ] && [ "$(cat "$DESKTOP" 2>/dev/null)" != "$ENTRY" ]; then
   mkdir -p "${DESKTOP%/*}" && printf '%s

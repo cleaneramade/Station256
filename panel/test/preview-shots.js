@@ -32,8 +32,17 @@ esac
     await sleep(400);
     await sleep(1500);
     await shot('preview-home-card');
-    const labels = await page(`[...document.querySelectorAll('.home-card[data-project] .preview-btn')].map((b) => b.dataset.project + ':' + b.getAttribute('aria-label'))`);
-    report(labels.length >= 3 && labels.every((text) => text.includes(':Preview — start')), `every project card has a Preview button: ${JSON.stringify(labels)}`);
+    const buttonCounts = await page(`[...document.querySelectorAll('.home-card[data-project] .home-card-buttons')].map((row) => row.children.length)`);
+    report(buttonCounts.length >= 3 && buttonCounts.every((n) => n === 1), `every project card has just one button: ${JSON.stringify(buttonCounts)}`);
+    const menuOf = async (name) => {
+      await page(`(() => { const c = document.querySelector('.home-card[data-project="${name}"]'); const b = c.getBoundingClientRect(); c.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: b.left + 30, clientY: b.top + 20 })); return true; })()`);
+      await sleep(900);
+      const list = await page(`[...document.querySelectorAll('#menu:not([hidden]) .menu-item')].map((m) => m.textContent.trim())`);
+      await page(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); true`);
+      return list;
+    };
+    const first = await menuOf('SampleApp');
+    report(first.includes('Preview'), `Preview is in the card's right-click menu: ${JSON.stringify(first.slice(0, 6))}`);
     const oneRow = `[...document.querySelectorAll('.home-card-buttons')].every((row) => new Set([...row.children].map((b) => Math.round(b.getBoundingClientRect().top))).size === 1 && row.scrollWidth <= row.parentElement.clientWidth)`;
     report(await page(oneRow), 'every card keeps one row of buttons');
     const [wide, tall] = win.getSize();
@@ -74,7 +83,8 @@ esac
     await page(`(async () => { activateTab(state.tabs[0]); return true; })()`);
     await sleep(400);
     await shot('preview-home-card-running');
-    report(await page(`document.querySelector('.preview-btn[data-project="SampleApp"]')?.classList.contains('running') || false`), 'the card button shows its running dot');
+    const running = await menuOf('SampleApp');
+    report(running.includes('Open Preview'), `the card's menu now says Open Preview: ${JSON.stringify(running.slice(0, 6))}`);
     // Clicking again opens the page again, with no second terminal or typed command.
     const tabs = await page(`state.tabs.length`);
     await page(`previewProject('SampleApp')`);

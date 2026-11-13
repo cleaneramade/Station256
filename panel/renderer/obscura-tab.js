@@ -59,24 +59,46 @@ function openObscura(url = null) {
   input.spellcheck = false;
   input.setAttribute('aria-label', 'Web address');
   input.placeholder = 'Search or type a web address';
+  const star = el('button', 'ob-star');
+  star.type = 'button';
+  star.append(icon('star'));
+  star.hidden = true;
   const field = el('div', 'ob-field');
-  field.append(lock, input);
+  field.append(lock, input, star);
   // On the right: which project this page belongs to, which AI is using it (hidden until set), and
   // the page in Windows' own browser. One compact row, so the page gets everything else.
+  // Which project and AI a tab belongs to is kept (setObscuraInfo) but not drawn: the room in the
+  // bar is the page's zoom, and an AI at work shows as a banner over the page instead.
   const project = el('span', 'ob-chip', 'Not tied to a project');
   const agent = el('span', 'ob-chip ob-chip-agent');
   agent.hidden = true;
-  // While an AI from a project's room is using this tab (lib/ai-browser.js): Stop takes it back.
+  // Over the page while an AI from a project's room is using this tab (lib/ai-browser.js): Stop
+  // takes it back.
   const aiStop = el('button', 'ob-ai-stop', 'Stop');
   aiStop.type = 'button';
   aiStop.title = 'Take this page back from the AI';
+  const aiBanner = el('div', 'ob-ai-banner');
+  const aiBannerText = el('span', 'ob-ai-banner-text');
+  aiBanner.append(el('span', 'ob-ai-pulse'), aiBannerText, el('span', 'ob-ai-spacer'), aiStop);
+  aiBanner.hidden = true;
   aiStop.hidden = true;
-  const outside = el('button', 'ob-outside');
-  outside.type = 'button';
-  outside.title = 'Open this page in your browser on Windows';
-  outside.append(icon('open'), el('span', '', 'Open in browser'));
+  // The page's zoom, in the room the project used to take.
+  const zoomOut = button('subtract', 'Zoom out (Ctrl -)');
+  const zoomIn = button('add', 'Zoom in (Ctrl +)');
+  const zoomText = el('button', 'ob-zoom-level', '100%');
+  zoomText.type = 'button';
+  zoomText.title = 'Back to 100% (Ctrl 0)';
+  const zoomBox = el('div', 'ob-zoom');
+  zoomBox.append(zoomOut, zoomText, zoomIn);
+  // Only in a split view (a browser tab dragged onto another's page): back to two tabs.
+  const unsplit = button('panel_right_contract', 'Separate into two tabs');
+  unsplit.hidden = true;
+  const marks = button('bookmarks', 'Bookmarks');
+  const past = button('history', 'History (Ctrl+H)');
+  const newTab = button('tab_add', 'New browser tab (Ctrl+T)');
+  for (const extra of [marks, past, newTab]) extra.classList.add('ob-extra'); // hidden in a narrow page (style.css)
   const bar = el('div', 'ob-bar');
-  bar.append(back, forward, reload, field, project, agent, aiStop, outside);
+  bar.append(back, forward, reload, field, marks, past, newTab, zoomBox, unsplit);
   const progress = el('div', 'ob-load');
   progress.hidden = true;
   const note = el('div', 'ob-note');
@@ -99,20 +121,46 @@ function openObscura(url = null) {
   view.setAttribute('partition', OBSCURA_PARTITION);
   view.setAttribute('src', url || 'about:blank');
   const message = el('div', 'ob-message');
-  const aiDot = el('div', 'ob-ai-dot');
+  // The AI's cursor (a second pointer with its name), the ripple where it presses, and a soft glow
+  // round the page: all drawn over the page, none of it catching the mouse.
+  const aiDot = el('div', 'ob-ai-cursor');
+  // Built by hand, never from a string of HTML.
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('width', '22');
+  svg.setAttribute('height', '22');
+  svg.setAttribute('viewBox', '0 0 22 22');
+  const arrow = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  for (const [name, value] of Object.entries({ d: 'M3 2 L3 17.5 L7.2 13.6 L10 19.5 L12.6 18.3 L9.8 12.5 L15.5 12.2 Z', fill: '#d97757', stroke: '#fff', 'stroke-width': '1.6', 'stroke-linejoin': 'round' })) arrow.setAttribute(name, value);
+  svg.append(arrow);
+  aiDot.append(svg);
+  const aiName = el('span', 'ob-ai-name');
+  aiDot.append(aiName);
   aiDot.hidden = true;
-  stage.append(view, message, aiDot);
-  tab.host.append(bar, progress, note, findBar, stage);
+  const aiRing = el('div', 'ob-ai-ring');
+  aiRing.hidden = true;
+  const aiGlow = el('div', 'ob-ai-glow');
+  aiGlow.hidden = true;
+  stage.append(view, message, aiGlow, aiRing, aiDot);
+  // The strip says an AI is at work; it takes its own row above the page, so it never covers the page.
+  tab.host.append(bar, progress, aiBanner, note, findBar, stage);
   tab.host.hidden = true;
   tab.view = view;
   tab.input = input;
-  Object.assign(tab, { outside, project, agent, aiStop, aiDot, back, forward, reload, lock, progress, note, findBar, findInput, findCount, message });
+  tab.field = field;
+  Object.assign(tab, { star, marks, past, project, agent, aiStop, aiBanner, aiBannerText, aiDot, aiName, aiRing, aiGlow, zoomText, unsplit, back, forward, reload, lock, progress, note, findBar, findInput, findCount, message });
   docArea.append(tab.host);
 
   showObscuraStart(tab);
   hookObscura(tab);
-  outside.addEventListener('click', () => { if (/^https?:\/\//i.test(tab.url)) attempt(() => call('openLink', tab.url)); });
   aiStop.addEventListener('click', () => stopAiBrowser(tab));
+  zoomOut.addEventListener('click', () => zoomObscura(tab, -1));
+  zoomIn.addEventListener('click', () => zoomObscura(tab, 1));
+  zoomText.addEventListener('click', () => zoomObscura(tab, 0));
+  unsplit.addEventListener('click', () => separateObscura(tab));
+  star.addEventListener('click', () => toggleBookmark(tab));
+  marks.addEventListener('click', () => showObscuraList(tab, 'bookmarks'));
+  past.addEventListener('click', () => showObscuraList(tab, 'history'));
+  newTab.addEventListener('click', () => openObscura());
   addTabElement(tab, 'New tab');
   state.tabs.push(tab);
   renderTabButtons();
@@ -128,6 +176,56 @@ function setObscuraInfo(info = {}, tab = state.active) {
   tab.project.classList.toggle('set', !!info.project);
   tab.agent.textContent = info.agent || '';
   tab.agent.hidden = !info.agent;
+  tab.field.title = info.project ? `Tied to ${info.project}` : '';
+}
+
+// The banner over the page while an AI is at work; it goes by itself a few seconds after the AI's
+// last move, and comes back with the next one.
+function aiAtWork(tab, agent, doing) {
+  if (!tab.aiOf) return;
+  if (agent) { tab.aiBase = agent; tab.aiName.textContent = agent.replace(/ is using this page$/, ''); }
+  tab.aiBannerText.textContent = doing ? `${tab.aiBase || 'An AI is using this page'}: ${doing}` : (tab.aiBase || 'An AI is using this page');
+  tab.aiBanner.hidden = false;
+  tab.aiStop.hidden = false;
+  tab.aiGlow.hidden = false;
+  clearTimeout(tab.aiBannerTimer);
+  tab.aiBannerTimer = setTimeout(() => aiResting(tab), 7000);
+}
+// A few seconds after its last move the strip, glow and cursor go; the next move brings them back.
+function aiResting(tab) {
+  tab.aiBanner.hidden = true;
+  tab.aiGlow.hidden = true;
+  tab.aiDot.hidden = true;
+  tab.aiRing.hidden = true;
+  tab.aiAt = null;
+}
+// Its cursor glides to where it will act along a gentle curve and eases in and out, then presses.
+const aiEase = (t) => (t < 0.5 ? 4 * t * t * t : 1 - ((-2 * t + 2) ** 3) / 2);
+function aiGlide(tab, to, doing) {
+  const from = tab.aiAt || [to[0], Math.max(8, to[1] - 140)]; // the first time it comes down from above
+  tab.aiAt = to;
+  const cursor = tab.aiDot;
+  cursor.hidden = false;
+  const bend = 0.05 * (to[0] < from[0] ? -1 : 1);
+  const mx = (from[0] + to[0]) / 2 - (to[1] - from[1]) * bend * 4;
+  const my = (from[1] + to[1]) / 2 + (to[0] - from[0]) * bend * 4;
+  const start = performance.now();
+  const duration = 400;
+  const token = (tab.aiGlideId = (tab.aiGlideId || 0) + 1);
+  requestAnimationFrame(function frame(now) {
+    if (tab.aiGlideId !== token || tab.closed) return;
+    const q = aiEase(Math.min(1, (now - start) / duration));
+    const x = (1 - q) ** 2 * from[0] + 2 * (1 - q) * q * mx + q * q * to[0];
+    const y = (1 - q) ** 2 * from[1] + 2 * (1 - q) * q * my + q * q * to[1];
+    cursor.style.translate = `${x}px ${y}px`;
+    if (q < 1) { requestAnimationFrame(frame); return; }
+    if (doing === 'click') {
+      cursor.animate([{ scale: 1 }, { scale: 0.86 }, { scale: 1 }], 220);
+      tab.aiRing.style.translate = `${to[0] - 14}px ${to[1] - 14}px`;
+      tab.aiRing.hidden = false;
+      tab.aiRing.animate([{ scale: 0.3, opacity: 0.7 }, { scale: 1, opacity: 0 }], { duration: 420, easing: 'cubic-bezier(.33,1,.68,1)' });
+    }
+  });
 }
 
 function showObscuraMessage(tab, title, text) {
@@ -144,10 +242,60 @@ const OBSCURA_DEFAULT_SITES = [
   { url: 'https://www.youtube.com', name: 'YouTube' },
 ];
 let obscuraSites = null; // [{ url (the site's front door), name, count, fav }], loaded once from the prefs
+// Bookmarks and history are kept in the same place, on this computer only: [{ url, title, fav? }] and
+// [{ url, title, at }], newest first.
+let obscuraBookmarks = [];
+let obscuraHistory = [];
+const webPages = (list) => (Array.isArray(list) ? list.filter((page) => /^https?:\/\//.test(page?.url)) : []);
 const obscuraSitesReady = () => (obscuraSites ? Promise.resolve(obscuraSites) : call('prefs').catch(() => ({})).then((saved) => {
-  obscuraSites = obscuraSites || (Array.isArray(saved.sites) ? saved.sites.filter((site) => /^https?:\/\//.test(site?.url)) : []);
+  obscuraSites = obscuraSites || webPages(saved.sites);
+  obscuraBookmarks = webPages(saved.bookmarks);
+  obscuraHistory = webPages(saved.history);
   return obscuraSites;
 }));
+let pagesSaveTimer = 0;
+const saveObscuraPages = () => {
+  clearTimeout(pagesSaveTimer);
+  pagesSaveTimer = setTimeout(() => call('setPrefs', { bookmarks: obscuraBookmarks.slice(0, 300), history: obscuraHistory.slice(0, 400) }).catch(() => {}), 800);
+};
+const obscuraTabs = () => state.tabs.filter((tab) => tab.kind === 'obscura' && !tab.closed);
+const isLocalAddress = (url) => /^https?:\/\/(localhost|\d{1,3}(\.\d{1,3}){3}|\[)/i.test(url);
+
+// A page opened in a tab (not an AI's, not a project's preview) goes in the history.
+function rememberObscuraVisit(tab, url) {
+  if (tab.aiOf || tab.previewOf || !/^https?:\/\//i.test(url) || isLocalAddress(url)) return;
+  const last = obscuraHistory[0];
+  if (last && last.url === url) { last.at = Date.now(); } else obscuraHistory.unshift({ url, title: '', at: Date.now() });
+  if (obscuraHistory.length > 400) obscuraHistory.length = 400;
+  saveObscuraPages();
+}
+function titleObscuraVisit(tab, title) {
+  const last = obscuraHistory[0];
+  if (last && last.url === tab.url && title) { last.title = String(title).slice(0, 120); saveObscuraPages(); }
+}
+const bookmarkOf = (url) => obscuraBookmarks.find((page) => page.url === url);
+function toggleBookmark(tab) {
+  if (!/^https?:\/\//i.test(tab.url || '')) return;
+  const found = bookmarkOf(tab.url);
+  if (found) obscuraBookmarks.splice(obscuraBookmarks.indexOf(found), 1);
+  else {
+    const title = tab.el.querySelector('.tab-title').textContent;
+    obscuraBookmarks.unshift({ url: tab.url, title: String(title || obscuraHost(tab.url)).slice(0, 120), ...(tab.favicon && tab.favicon.length < 3000 ? { fav: tab.favicon } : {}) });
+  }
+  saveObscuraPages();
+  obscuraTabs().forEach(refreshObscuraStar);
+  obscuraNote(tab, found ? 'Bookmark removed.' : 'Bookmarked.');
+}
+function refreshObscuraStar(tab) {
+  const real = /^https?:\/\//i.test(tab.url || '');
+  const on = real && Boolean(bookmarkOf(tab.url));
+  tab.star.hidden = !real;
+  tab.star.classList.toggle('on', on);
+  setIcon(tab.star.firstChild, on ? 'star-filled' : 'star');
+  tab.star.title = on ? 'Remove the bookmark (Ctrl+D)' : 'Bookmark this page (Ctrl+D)';
+  tab.star.setAttribute('aria-label', tab.star.title);
+  tab.drawHome?.();
+}
 const saveObscuraSites = () => call('setPrefs', { sites: obscuraSites.slice(0, 24) }).catch(() => {});
 
 // A page opened in a tab (not an AI's, not a project's preview): count its site.
@@ -188,13 +336,18 @@ function showObscuraStart(tab) {
     goObscura(tab, box.value);
   });
   const tiles = el('div', 'ob-tiles');
+  const tilesLabel = el('div', 'ob-home-label');
+  const recent = el('div', 'ob-recent');
   tab.homeBox = box;
   tab.message.className = 'ob-message ob-home';
   tab.message.replaceChildren(el('div', 'ob-home-inner'));
-  tab.message.firstChild.append(logo, box, tiles);
+  tab.message.firstChild.append(logo, box, tilesLabel, tiles, recent);
   tab.message.hidden = false;
   const draw = () => {
-    const mine = obscuraSites.slice(0, 8);
+    // Bookmarks first; until there are some, the sites visited most (or a few to start with).
+    const kept = obscuraBookmarks.slice(0, 8).map((page) => ({ ...page, name: page.title || obscuraHost(page.url), bookmark: true }));
+    const mine = kept.length ? kept : obscuraSites.slice(0, 8);
+    tilesLabel.textContent = kept.length ? 'Bookmarks' : mine.length ? 'Most visited' : 'Start with';
     tiles.replaceChildren(...(mine.length ? mine : OBSCURA_DEFAULT_SITES).map((site) => {
       const tile = el('div', 'ob-tile');
       const open = el('button', 'ob-tile-open');
@@ -211,6 +364,7 @@ function showObscuraStart(tab) {
         gone.title = `Remove ${site.name} from this list`;
         gone.setAttribute('aria-label', gone.title);
         gone.addEventListener('click', () => {
+          if (site.bookmark) { obscuraBookmarks.splice(obscuraBookmarks.findIndex((page) => page.url === site.url), 1); saveObscuraPages(); obscuraTabs().forEach(refreshObscuraStar); return; }
           obscuraSites.splice(obscuraSites.indexOf(site), 1);
           saveObscuraSites();
           draw();
@@ -219,8 +373,112 @@ function showObscuraStart(tab) {
       }
       return tile;
     }));
+    // The last few pages visited.
+    const lately = obscuraHistory.slice(0, 6);
+    recent.replaceChildren(...(lately.length ? [el('div', 'ob-home-label', 'Recently visited')] : []), ...lately.map((page) => {
+      const row = el('button', 'ob-recent-row');
+      row.type = 'button';
+      row.title = page.url;
+      row.append(el('span', 'ob-pop-title', page.title || obscuraHost(page.url)), el('span', 'ob-pop-host', obscuraHost(page.url)));
+      row.addEventListener('click', () => goObscura(tab, page.url));
+      return row;
+    }));
   };
+  tab.drawHome = draw;
   obscuraSitesReady().then(draw);
+}
+
+// Bookmarks and History, as a panel under the bar. Text only (never HTML); a click goes there in this tab.
+function showObscuraList(tab, kind) {
+  const open = tab.pop;
+  if (open) { open.remove(); tab.pop = null; if (open.dataset.kind === kind) return; }
+  const pop = el('div', 'ob-pop');
+  pop.dataset.kind = kind;
+  const head = el('div', 'ob-pop-head');
+  head.append(el('strong', '', kind === 'history' ? 'History' : 'Bookmarks'));
+  const search = el('input', 'ob-pop-search');
+  search.type = 'text';
+  search.placeholder = kind === 'history' ? 'Search history' : 'Search bookmarks';
+  search.spellcheck = false;
+  const clear = el('button', 'ob-pop-clear', kind === 'history' ? 'Clear history' : 'Remove all');
+  clear.type = 'button';
+  head.append(search, clear);
+  const list = el('div', 'ob-pop-list');
+  pop.append(head, list);
+  const close = () => { pop.remove(); tab.pop = null; document.removeEventListener('mousedown', outside, true); };
+  const outside = (event) => { if (!pop.contains(event.target) && !tab.marks.contains(event.target) && !tab.past.contains(event.target)) close(); };
+  const source = () => (kind === 'history' ? obscuraHistory : obscuraBookmarks);
+  const draw = () => {
+    const words = search.value.trim().toLowerCase();
+    const shown = source().filter((page) => !words || `${page.title || ''} ${page.url}`.toLowerCase().includes(words)).slice(0, 80);
+    if (!shown.length) { list.replaceChildren(el('div', 'ob-pop-empty', words ? 'Nothing matches.' : kind === 'history' ? 'Pages you visit show up here.' : 'Press the star in the address bar to keep a page here.')); return; }
+    list.replaceChildren(...shown.map((page) => {
+      const row = el('div', 'ob-pop-row');
+      const go = el('button', 'ob-pop-go');
+      go.type = 'button';
+      go.title = page.url;
+      go.append(el('span', 'ob-pop-title', page.title || obscuraHost(page.url)), el('span', 'ob-pop-host', obscuraHost(page.url)));
+      go.addEventListener('click', () => { close(); goObscura(tab, page.url); });
+      const gone = el('button', 'ob-pop-x', '×');
+      gone.type = 'button';
+      gone.title = 'Remove';
+      gone.setAttribute('aria-label', `Remove ${page.title || obscuraHost(page.url)}`);
+      gone.addEventListener('click', () => {
+        source().splice(source().indexOf(page), 1);
+        saveObscuraPages();
+        obscuraTabs().forEach(refreshObscuraStar);
+        draw();
+      });
+      row.append(go, gone);
+      return row;
+    }));
+  };
+  search.addEventListener('input', draw);
+  search.addEventListener('keydown', (event) => { if (event.key === 'Escape') { event.preventDefault(); close(); } });
+  clear.addEventListener('click', () => {
+    source().length = 0;
+    saveObscuraPages();
+    obscuraTabs().forEach(refreshObscuraStar);
+    draw();
+  });
+  tab.pop = pop;
+  tab.host.append(pop);
+  document.addEventListener('mousedown', outside, true);
+  if (obscuraSites) draw(); else obscuraSitesReady().then(draw);
+  search.focus();
+}
+
+// A page's zoom belongs to its tab: 100% is how a normal browser shows it. Station itself is drawn
+// larger than the screen's own scale (main.js BASE_ZOOM and the footer's zoom), and a page inside it
+// is drawn on its own, so it's multiplied by that too: otherwise every page looks zoomed out next to
+// the same address in a normal browser.
+const hostZoom = () => { try { return window.house.getZoomFactor() || 1; } catch { return 1; } };
+// 100% is the look that was 80% of that: the owner's choice (2026-11-12), so pages sit at a size
+// that suits Station's screen without having to zoom out first.
+let pageScale = 1.25; // Windows' display scale, from main.js; 100% is as big as in a normal browser
+call('pageScale').then((scale) => { pageScale = scale || pageScale; }).catch(() => {});
+function applyObscuraZoom(tab) {
+  try { tab.view.setZoomFactor(tab.zoom * pageScale); } catch { /* not ready */ }
+  if (tab.zoomText) tab.zoomText.textContent = `${Math.round(tab.zoom * 100)}%`;
+}
+// direction: 1 bigger, -1 smaller, 0 back to 100%. Steps follow Chrome's list.
+const OBSCURA_ZOOMS = [0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5];
+function zoomObscura(tab, direction) {
+  if (direction === 0) tab.zoom = 1;
+  else if (direction > 0) tab.zoom = OBSCURA_ZOOMS.find((step) => step > tab.zoom + 0.001) || 5;
+  else tab.zoom = [...OBSCURA_ZOOMS].reverse().find((step) => step < tab.zoom - 0.001) || 0.25;
+  applyObscuraZoom(tab);
+  showZoomLabel();
+}
+// The footer shows the front tab's zoom: the page's in a browser tab, Station's elsewhere.
+function showZoomLabel() {
+  const tab = state.active;
+  $('zoom-level').textContent = tab?.kind === 'obscura' ? `${Math.round(tab.zoom * 100)}%` : `${Math.round((hostZoom() / 1.35) * 100)}%`;
+}
+// Station's own zoom changed: every page follows it, keeping its own zoom on top.
+function rezoomObscuraTabs() {
+  for (const tab of state.tabs || []) if (tab.kind === 'obscura') applyObscuraZoom(tab);
+  showZoomLabel();
 }
 
 // A short line under the address bar ("Saved to Downloads: name.zip"); it goes away by itself.
@@ -277,6 +535,7 @@ function obscuraShowAddress(tab, url) {
   const typing = document.activeElement === tab.input && tab.input.value && tab.input.value !== tab.url;
   tab.url = real ? url : '';
   if (!typing) tab.input.value = real ? url : '';
+  refreshObscuraStar(tab);
   tab.lock.hidden = !real;
   if (real) {
     const secure = /^https:/i.test(url);
@@ -328,14 +587,14 @@ function hookObscura(tab) {
   });
   view.addEventListener('did-navigate', (event) => {
     obscuraShowAddress(tab, event.url);
-    obscuraSitesReady().then(() => rememberObscuraSite(tab, event.url));
+    obscuraSitesReady().then(() => { rememberObscuraSite(tab, event.url); rememberObscuraVisit(tab, event.url); });
   });
   view.addEventListener('did-navigate-in-page', (event) => { if (event.isMainFrame) obscuraShowAddress(tab, event.url); });
-  view.addEventListener('page-title-updated', (event) => setObscuraTitle(tab, event.title));
+  view.addEventListener('page-title-updated', (event) => { setObscuraTitle(tab, event.title); titleObscuraVisit(tab, event.title); });
   view.addEventListener('dom-ready', () => {
     try {
       tab.wcId = view.getWebContentsId();
-      view.setZoomFactor(tab.zoom);
+      applyObscuraZoom(tab);
     } catch { /* gone */ }
   });
   view.addEventListener('found-in-page', (event) => {
@@ -427,13 +686,12 @@ function obscuraKey(tab, { key, ctrl, shift, alt }) {
   if (lower === 'l') { tab.input.focus(); return true; }
   if (lower === 'f') { openObscuraFind(tab); return true; }
   if (lower === 'w') { closeTab(tab); return true; }
-  if (lower === 't') { openFilesTab(HOME_PAGE); return true; }
+  if (lower === 't') { openObscura(); return true; }
+  if (lower === 'd') { toggleBookmark(tab); return true; }
+  if (lower === 'h') { showObscuraList(tab, 'history'); return true; }
   if (key === 'Tab') { cycleTab(shift ? -1 : 1); return true; }
   if (['+', '=', '-', '_', '0'].includes(key)) {
-    const next = key === '0' ? 1 : Math.max(0.25, Math.min(5, tab.zoom + (key === '-' || key === '_' ? -0.1 : 0.1)));
-    tab.zoom = Math.round(next * 100) / 100;
-    try { tab.view.setZoomFactor(tab.zoom); } catch { /* not ready */ }
-    obscuraNote(tab, `Zoom ${Math.round(tab.zoom * 100)}%`);
+    zoomObscura(tab, key === '0' ? 0 : key === '-' || key === '_' ? -1 : 1);
     return true;
   }
   return false;
@@ -458,6 +716,7 @@ window.house.on('obscura:event', (event) => {
   if (!tab) return;
   if (event.kind === 'key') obscuraKey(tab, event);
   else if (event.kind === 'menu') obscuraMenu(tab, event);
+  else if (event.kind === 'zoom') zoomObscura(tab, event.direction);
   // A page's own request for a tab; never more than 20 Obscura tabs that way.
   else if (event.kind === 'open' && typeof event.url === 'string' && state.tabs.filter((other) => other.kind === 'obscura').length < 20) openInObscura(event.url);
   else if (event.kind === 'note' && typeof event.note === 'string') obscuraNote(tab, event.note);
@@ -467,6 +726,49 @@ window.house.on('obscura:event', (event) => {
     rememberObscuraSite(tab, tab.url, event.src);
   }
 });
+
+// Split view: a browser tab dragged onto another browser's page (renderer/app.js, the tab drag) joins
+// it, on the side it was dropped: one tab on the strip, two pages side by side. Separate (the button
+// in either page's bar, or the tab's right-click menu) gives two tabs again.
+function mergeObscuraTabs(dragged, target, side) {
+  if (!dragged || !target || dragged === target || dragged.splitWith || target.splitWith || dragged.kind !== 'obscura' || target.kind !== 'obscura') return false;
+  dragged.splitWith = target;
+  target.splitWith = dragged;
+  dragged.mergedInto = target; // its place on the strip goes; the target's tab stands for both
+  dragged.el.style.display = 'none';
+  const left = side === 'left';
+  dragged.host.style.order = left ? '0' : '1';
+  target.host.style.order = left ? '1' : '0';
+  dragged.unsplit.hidden = false;
+  target.unsplit.hidden = false;
+  activateTab(target);
+  return true;
+}
+function separateObscura(tab) {
+  const other = tab.splitWith;
+  if (!other) return;
+  const shown = tab.mergedInto ? tab.mergedInto : tab;
+  for (const one of [tab, other]) {
+    one.splitWith = null;
+    one.mergedInto = null;
+    one.el.style.display = '';
+    one.host.style.order = '';
+    one.unsplit.hidden = true;
+  }
+  activateTab(shown === tab ? tab : shown);
+}
+// Closing one half leaves the other whole, as a tab of its own.
+function endObscuraSplit(tab) {
+  const other = tab.splitWith;
+  if (!other) return;
+  tab.splitWith = null;
+  tab.mergedInto = null;
+  other.splitWith = null;
+  other.mergedInto = null;
+  other.el.style.display = '';
+  other.host.style.order = '';
+  other.unsplit.hidden = true;
+}
 
 // A project's Preview page (preview.js asks, main.js sends it once the site is up): one Obscura tab
 // per project, tied to it in the bar. Asked again, that tab comes to the front and loads the page again.
@@ -491,6 +793,11 @@ async function openHtmlInBrowser(entry) {
   if (url) showPreviewPage(url, `file:${entry.path}`, `Preview of ${entry.name}`);
 }
 
+// A link clicked in Station (a terminal, a document, a Home button): the Web Browser, never Windows'.
+window.house.on('link:open', (event) => {
+  if (typeof event?.url === 'string') openInObscura(event.url);
+});
+
 window.house.on('preview:open', (event) => {
   if (typeof event?.url === 'string' && typeof event.project === 'string') showPreviewPage(event.url, event.project);
 });
@@ -508,7 +815,8 @@ window.house.on('aibrowser:tab', async ({ ask, project, agent, open }) => {
   } else if (tab && open && state.active !== tab) activateTab(tab);
   if (tab) {
     setObscuraInfo({ project, agent: `${agent} is using this page` }, tab);
-    tab.aiStop.hidden = false;
+    tab.aiName.textContent = agent;
+    aiAtWork(tab, `${agent} is using this page`);
     for (let waited = 0; waited < 5000 && !tab.wcId; waited += 100) {
       try { tab.wcId = tab.view.getWebContentsId(); } catch { await new Promise((resolve) => { setTimeout(resolve, 100); }); }
     }
@@ -527,10 +835,12 @@ function stopAiBrowser(tab) {
   const project = tab.aiOf;
   if (!project) return;
   tab.aiOf = null;
+  clearTimeout(tab.aiBannerTimer);
+  aiResting(tab);
   tab.aiStop.hidden = true;
-  tab.aiDot.hidden = true;
   setObscuraInfo({ project }, tab);
-  call('aiBrowserStop', project);
+  try { tab.view.stop(); } catch { /* not ready */ } // whatever it was loading stops too
+  call('aiBrowserStop', project).catch(() => {});
   obscuraNote(tab, 'You have this page back. The AI has to ask you before it uses the browser again.');
 }
 
@@ -551,20 +861,20 @@ window.house.on('aibrowser:ask', async ({ ask, project, agent, site, kind }) => 
   call('aiBrowserAnswer', ask, yes === true);
 });
 
-// A dot where the AI clicks or types, for a moment.
-window.house.on('aibrowser:pointer', ({ id, x, y }) => {
+// The AI's cursor: it glides to where the AI is about to click or type (lib/ai-browser.js). The
+// numbers are the guest's own pixels, so they are divided by this window's zoom to land on the page.
+window.house.on('aibrowser:pointer', ({ id, x, y, doing }) => {
   const tab = state.tabs.find((other) => other.kind === 'obscura' && other.wcId === id);
   if (!tab || !Number.isFinite(x) || !Number.isFinite(y)) return;
-  tab.aiDot.style.transform = `translate(${x}px, ${y}px)`;
-  tab.aiDot.hidden = false;
-  clearTimeout(tab.aiDotTimer);
-  tab.aiDotTimer = setTimeout(() => { tab.aiDot.hidden = true; }, 2500);
+  const zoom = hostZoom();
+  aiAtWork(tab, undefined, doing === 'type' ? 'typing' : doing === 'click' ? 'clicking' : '');
+  aiGlide(tab, [x / zoom, y / zoom], doing);
 });
 
 function showObscura(tab) {
   $('item-count').textContent = '';
   requestAnimationFrame(() => {
-    if (tab.closed || state.active !== tab) return;
+    if (tab.closed || state.active !== tab || tabDragging) return;
     if (tab.url) tab.view.focus();
     else (tab.homeBox && !tab.message.hidden ? tab.homeBox : tab.input).focus();
   });
@@ -575,6 +885,8 @@ function closeObscura(tab) {
   if (tab.closed) return;
   tab.closed = true;
   clearTimeout(tab.noteTimer);
+  clearTimeout(tab.aiBannerTimer);
+  endObscuraSplit(tab);
   tab.host.remove();
 }
 
@@ -588,4 +900,4 @@ function obscuraDescription(tab) {
   return { kind: 'obscura', url };
 }
 
-window.houseTest = Object.assign(window.houseTest || {}, { openInObscura, obscuraAddress, setObscuraInfo, stopAiBrowser });
+window.houseTest = Object.assign(window.houseTest || {}, { aiAtWork, aiGlide, aiResting, mergeObscuraTabs, separateObscura, zoomObscura, hostZoom, pageScale: () => pageScale, openInObscura, openObscura, obscuraAddress, setObscuraInfo, stopAiBrowser, rememberObscuraVisit, toggleBookmark, showObscuraList, bookmarks: () => obscuraBookmarks, history: () => obscuraHistory, ready: () => obscuraSitesReady() });

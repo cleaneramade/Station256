@@ -87,7 +87,8 @@ else {
     # -----------------------------------------------------------------------
     # Download and unpack
     # -----------------------------------------------------------------------
-    $work = Join-Path $env:TEMP ('station256-' + [guid]::NewGuid().ToString('N'))
+    # Not the temp folder: the install may stop for one Windows restart and must find its files after it.
+    $work = Join-Path $env:LOCALAPPDATA ('Station256-setup\' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Force -Path $work | Out-Null
     $zip = Join-Path $work 'station-256.zip'
 

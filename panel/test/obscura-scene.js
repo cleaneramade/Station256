@@ -76,8 +76,8 @@ module.exports = async function obscura({ page, shot, sleep, win }) {
     await shot('obscura-page');
 
     // The page takes the whole tab area; the other tabs get everything back exactly.
-    const front = await page(`(() => { const shown = (sel) => { const n = document.querySelector(sel); return !!n && n.getBoundingClientRect().width > 0 && getComputedStyle(n).display !== 'none'; }; const bar = document.querySelector('.ob-bar').getBoundingClientRect(); const stage = document.querySelector('.ob-stage').getBoundingClientRect(); const app = document.querySelector('.app').getBoundingClientRect(); return { cls: document.body.classList.contains('obscura-front'), nav: shown('.navpane'), address: shown('.addressbar'), command: shown('.commandbar'), status: shown('.main > .statusbar'), tabs: shown('.tabstrip'), barH: Math.round(bar.height), stageLeft: Math.round(stage.left - app.left), stageRight: Math.round(app.right - stage.right), stageBottom: Math.round(app.bottom - stage.bottom), info: document.querySelector('.ob-chip').textContent, outside: document.querySelector('.ob-outside').textContent, h: ['.doc-area', '.ob-host', '.ob-stage', '.ob-view'].map((q) => Math.round(document.querySelector(q).getBoundingClientRect().height)).join('/'), app: Math.round(app.height) }; })()`);
-    report(front.cls && !front.nav && !front.address && !front.command && !front.status && front.tabs && front.barH <= 34 && front.stageLeft <= 2 && front.stageRight <= 2 && front.stageBottom <= 2, `Obscura in front hides sidebar, folder header, command bar, status bar; keeps tab strip; page fills the area ${JSON.stringify(front)}`);
+    const front = await page(`(() => { const shown = (sel) => { const n = document.querySelector(sel); return !!n && n.getBoundingClientRect().width > 0 && getComputedStyle(n).display !== 'none'; }; const bar = document.querySelector('.ob-bar').getBoundingClientRect(); const stage = document.querySelector('.ob-stage').getBoundingClientRect(); const app = document.querySelector('.app').getBoundingClientRect(); return { cls: document.body.classList.contains('obscura-front'), nav: shown('.navpane'), address: shown('.addressbar'), command: shown('.commandbar'), status: shown('.main > .statusbar'), tabs: shown('.tabstrip'), barH: Math.round(bar.height), stageLeft: Math.round(stage.left - app.left), stageRight: Math.round(app.right - stage.right), stageBottom: Math.round(app.bottom - stage.bottom), info: document.querySelector('.ob-zoom-level').textContent, h: ['.doc-area', '.ob-host', '.ob-stage', '.ob-view'].map((q) => Math.round(document.querySelector(q).getBoundingClientRect().height)).join('/'), app: Math.round(app.height) }; })()`);
+    report(front.cls && !front.nav && !front.address && !front.command && !front.status && front.tabs && front.barH <= 40 && front.stageLeft <= 2 && front.stageRight <= 2 && front.stageBottom <= 2, `Obscura in front hides sidebar, folder header, command bar, status bar; keeps tab strip; page fills the area ${JSON.stringify(front)}`);
     await page(`(() => { document.querySelector('.ob-address').focus(); return true; })()`);
     await page(`(() => { window.house.setZoomFactor(2.2); return true; })()`);
     await sleep(500);
@@ -261,6 +261,110 @@ module.exports = async function obscura({ page, shot, sleep, win }) {
     probed = await probe(`v.setAttribute('partition', 'persist:station-editor'); v.setAttribute('src', 'station-editor://app/projects/');`);
     console.log(`INFO obscura: the editor's own webview ${probed.attached ? `attaches (preload ${path.basename(String(probed.prefs.preload || 'none'))}, sandbox ${probed.prefs.sandbox})` : 'is refused (editor not built here?)'}`);
     report(!probed.attached || (probed.prefs.sandbox === true && probed.prefs.nodeIntegration === false && probed.prefs.contextIsolation === true), "the editor's guard still works as before");
+
+    // Zoom belongs to the tab: one tab zoomed, the other stays; a page is drawn at 100% x Station's scale.
+    await page(`(() => { houseTest.openInObscura('${base}/ok'); return true; })()`);
+    await waitFor(`houseTest.state.active.loading === false && houseTest.state.active.url`);
+    const first = await page(`houseTest.state.active.title || houseTest.state.tabs.indexOf(houseTest.state.active)`);
+    await page(`(() => { houseTest.openInObscura('${base}/ok'); return true; })()`);
+    await waitFor(`houseTest.state.active.loading === false && houseTest.state.active.url && houseTest.state.tabs.indexOf(houseTest.state.active) !== ${JSON.stringify(first)}`);
+    const zoomOf = async (index) => page(`(() => { const t = houseTest.state.tabs.filter((x) => x.kind === 'obscura')[${index}]; return { tab: t.zoom, shown: t.view.getZoomFactor ? t.view.getZoomFactor() : null, host: houseTest.hostZoom(), scale: houseTest.pageScale() }; })()`);
+    await page(`(() => { houseTest.zoomObscura(houseTest.state.tabs.filter((x) => x.kind === 'obscura')[1], 1); return true; })()`);
+    await sleep(300);
+    const z0 = await zoomOf(0), z1 = await zoomOf(1);
+    report(z0.tab === 1 && z1.tab === 1.1, `zoom is per tab (first ${z0.tab}, second ${z1.tab})`);
+    report(Math.abs(z0.shown - z0.scale) < 0.01 && Math.abs(z1.shown - z1.scale * 1.1) < 0.01, `a page is drawn at its zoom x Windows' display scale (100% is as big as in a normal browser) (${JSON.stringify({ z0, z1 })})`);
+    const bar = await page(`(() => { const t = houseTest.state.tabs.filter((x) => x.kind === 'obscura')[1]; return { zoomShown: t.zoomText.textContent, chip: t.project.isConnected, banner: t.aiBanner.hidden, note: t.note.hidden }; })()`);
+    report(bar.zoomShown === '110%' && !bar.chip && bar.banner && bar.note, `the bar shows the zoom, no project chip, no AI banner, no zoom note (${JSON.stringify(bar)})`);
+    // Split view: a browser tab dropped on another's page joins it (one tab, two pages side by side) and separates again.
+    const splitInfo = () => page(`(() => { const ts = houseTest.state.tabs.filter((x) => x.kind === 'obscura'); const shown = ts.filter((t) => !t.host.hidden); const r = shown.map((t) => ({ box: t.host.getBoundingClientRect(), order: t.host.style.order })); return { tabs: ts.length, stripVisible: ts.filter((t) => t.el.style.display !== 'none').length, shown: shown.length, sideBySide: r.length === 2 && Math.abs(r[0].box.top - r[1].box.top) < 2 && (r[0].box.right <= r[1].box.left + 2 || r[1].box.right <= r[0].box.left + 2), leftFirst: shown.length === 2 && Math.min(...r.map((x) => x.box.left)) === r.find((x) => x.order === '0')?.box.left, split: document.querySelector('.doc-area').classList.contains('split'), unsplitShown: shown.every((t) => !t.unsplit.hidden) }; })()`);
+    const splitBefore = await splitInfo();
+    await page(`(() => { const ts = houseTest.state.tabs.filter((x) => x.kind === 'obscura'); houseTest.mergeObscuraTabs(ts[1], ts[0], 'left'); return true; })()`);
+    await sleep(600);
+    const merged = await splitInfo();
+    report(merged.shown === 2 && merged.sideBySide && merged.leftFirst && merged.stripVisible === splitBefore.stripVisible - 1 && merged.split && merged.unsplitShown, `dropping a browser tab on another's page makes one tab with two pages side by side (${JSON.stringify(merged)})`);
+    await page(`(() => { const ts = houseTest.state.tabs.filter((x) => x.kind === 'obscura'); houseTest.separateObscura(ts[1]); return true; })()`);
+    await sleep(500);
+    const parted = await splitInfo();
+    report(parted.stripVisible === splitBefore.stripVisible && parted.shown === 1 && !parted.split, `separating gives two tabs again (${JSON.stringify(parted)})`);
+    // The real gesture: press a browser tab, carry it down over the other page's right half, let go.
+    const geo = await page(`(() => { const ts = houseTest.state.tabs.filter((x) => x.kind === 'obscura'); const r = ts[1].el.getBoundingClientRect(); const d = document.getElementById('doc-area').getBoundingClientRect(); return { sx: r.left + r.width / 2, sy: r.top + r.height / 2, dx: d.left + d.width * 0.8, dy: d.top + d.height * 0.5, z: window.house.getZoomFactor() }; })()`);
+    const at = (x, y) => [Math.round(x * geo.z), Math.round(y * geo.z)];
+    const send = (type, x, y, extra = {}) => { const [px, py] = at(x, y); win.webContents.sendInputEvent({ type, x: px, y: py, button: 'left', clickCount: 1, ...extra }); };
+    await page(`(() => { window.__ev = []; window.addEventListener('error', (e) => window.__ev.push('ERR ' + e.message + ' @' + e.lineno), true); for (const n of ['pointerdown','pointermove','pointerup']) window.addEventListener(n, (e) => { if (window.__ev.length < 30) window.__ev.push(n + ':' + Math.round(e.clientX) + ',' + Math.round(e.clientY) + ':' + e.buttons + ':' + (e.target.className || e.target.tagName)); }, true); return true; })()`);
+    send('mouseMove', geo.sx, geo.sy);
+    send('mouseDown', geo.sx, geo.sy);
+    for (let i = 1; i <= 12; i += 1) { send('mouseMove', geo.sx + (geo.dx - geo.sx) * i / 12, geo.sy + (geo.dy - geo.sy) * i / 12, { modifiers: ['leftButtonDown'] }); await sleep(40); }
+    await sleep(300);
+    const zones = await page(`(() => { const z = document.querySelector('.snap-zones'); return { shown: !z.hidden, right: z.lastChild.classList.contains('on') }; })()`);
+    console.log('INFO obscura: state ' + JSON.stringify(await page(`({ lifted: document.querySelector('.tab-lifted') !== null, ghost: !document.querySelector('.tab-ghost')?.hidden, zonesHidden: document.querySelector('.snap-zones')?.hidden, docHidden: document.getElementById('doc-area').hidden, active: houseTest.state.active.kind, strip: document.querySelector('.tabstrip').getBoundingClientRect().toJSON(), tabs: document.getElementById('tabs') ? document.getElementById('tabs').getBoundingClientRect().toJSON() : null, tabsLen: houseTest.state.tabs.length })`)));
+    send('mouseUp', geo.dx, geo.dy);
+    console.log('INFO obscura: events ' + JSON.stringify(await page('window.__ev')).slice(0, 700) + ' geo ' + JSON.stringify(geo));
+    await sleep(900);
+    const dragged = await splitInfo();
+    report(zones.shown && zones.right && dragged.shown === 2 && dragged.sideBySide && dragged.stripVisible === splitBefore.stripVisible - 1, `carrying a browser tab over another page shows the halves, letting go joins them (${JSON.stringify({ zones, dragged })})`);
+    await page(`(() => { const ts = houseTest.state.tabs.filter((x) => x.kind === 'obscura'); houseTest.separateObscura(ts.find((x) => x.splitWith)); return true; })()`);
+    await sleep(500);
+    // The AI's click spots are the guest's own pixels: they must line up with the page as drawn here.
+    const scaleCheck = await page(`(async () => { const t = houseTest.state.active; const w = t.view.getBoundingClientRect(); const inner = await t.view.executeJavaScript('innerWidth'); return { viewDip: w.width * houseTest.hostZoom(), pageDip: inner * t.view.getZoomFactor(), hostZoom: houseTest.hostZoom(), guestZoom: t.view.getZoomFactor() }; })()`);
+    report(Math.abs(scaleCheck.viewDip - scaleCheck.pageDip) / scaleCheck.viewDip < 0.03, `the AI's click positions map onto the page: window pixels ${Math.round(scaleCheck.viewDip)} = page ${Math.round(scaleCheck.pageDip)} (${JSON.stringify(scaleCheck)})`);
+    // An AI at work: a strip above the page (never over it), a glow round the page, its own cursor.
+    await page(`(() => { const t = houseTest.state.active; t.aiOf = 'Demo'; houseTest.aiAtWork(t, 'Claude is using this page', 'clicking'); houseTest.aiGlide(t, [260, 180], 'click'); return true; })()`);
+    await sleep(900);
+    const ai = await page(`(() => { const t = houseTest.state.active; const b = t.aiBanner.getBoundingClientRect(); const s = t.host.querySelector('.ob-stage').getBoundingClientRect(); const c = t.aiDot.getBoundingClientRect(); return { stripAbovePage: b.bottom <= s.top + 1 && b.height > 10, glow: !t.aiGlow.hidden, cursorShown: !t.aiDot.hidden, cursorInPage: c.left >= s.left && c.top >= s.top && c.right <= s.right + 40, text: t.aiBannerText.textContent, name: t.aiName.textContent }; })()`);
+    await shot('obscura-ai-at-work');
+    report(ai.stripAbovePage && ai.glow && ai.cursorShown && ai.cursorInPage && /clicking/.test(ai.text), `an AI at work: strip above the page, glow, its own cursor (${JSON.stringify(ai)})`);
+    await page(`(() => { const t = houseTest.state.active; houseTest.aiResting(t); t.aiOf = null; return true; })()`);
+    // The plus button's right-click menu has the same things as New.
+    await page(`(() => { document.getElementById('new-tab').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 300, clientY: 40 })); return true; })()`);
+    await sleep(300);
+    const plus = await page(`(() => [...document.querySelectorAll('#menu, .menu')].map((m) => m.textContent).join('|'))()`);
+    report(/Web Browser/.test(plus) && /Home/.test(plus), `right-clicking the plus offers Web Browser and the rest of New (${plus.slice(0, 120)})`);
+    await page(`(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); return true; })()`);
+    await page(`(() => { for (const t of [...houseTest.state.tabs]) if (t.kind === 'obscura') houseTest.closeTab(t); return true; })()`);
+    await sleep(500);
+    await page(`(() => { houseTest.openInObscura('${base}/ok'); return true; })()`);
+    await waitFor(`houseTest.state.active.loading === false && houseTest.state.active.url`);
+
+    // Bookmarks, history, and a new browser tab from the keyboard.
+    await page(`houseTest.ready().then(() => true)`);
+    await page(`(() => { houseTest.openObscura(); return true; })()`);
+    await sleep(500);
+    const pagesCheck = await page(`(() => {
+      const t = houseTest.state.active;
+      houseTest.rememberObscuraVisit(t, 'https://example.com/a');
+      houseTest.rememberObscuraVisit(t, '${base}/ok');
+      const kept = houseTest.history().map((h) => h.url);
+      t.url = 'https://example.com/a';
+      houseTest.toggleBookmark(t);
+      const added = houseTest.bookmarks().length;
+      const starOn = t.star.classList.contains('on') && !t.star.hidden;
+      houseTest.showObscuraList(t, 'bookmarks');
+      const row = t.host.querySelector('.ob-pop .ob-pop-row')?.textContent || '';
+      houseTest.showObscuraList(t, 'bookmarks');
+      const closed = !t.host.querySelector('.ob-pop');
+      houseTest.showObscuraList(t, 'history');
+      const histRow = t.host.querySelector('.ob-pop .ob-pop-row')?.textContent || '';
+      houseTest.showObscuraList(t, 'history');
+      const barHeight = t.host.querySelector('.ob-bar').getBoundingClientRect().height;
+      houseTest.toggleBookmark(t);
+      const removed = houseTest.bookmarks().length;
+      t.url = '';
+      return { kept, added, starOn, row, closed, histRow, removed, barHeight };
+    })()`);
+    report(pagesCheck.kept[0] === 'https://example.com/a' && !pagesCheck.kept.some((url) => /127\.0\.0\.1|localhost/.test(url)), `history keeps pages you visit (newest first) and leaves local ones out: ${JSON.stringify(pagesCheck.kept)}`);
+    report(pagesCheck.added === 1 && pagesCheck.starOn && /example\.com/.test(pagesCheck.row) && pagesCheck.closed && pagesCheck.removed === 0, `the star bookmarks a page, the list shows it, and the star removes it: ${JSON.stringify({ a: pagesCheck.added, on: pagesCheck.starOn, row: pagesCheck.row.slice(0, 40), c: pagesCheck.closed, r: pagesCheck.removed })}`);
+    report(/example\.com/.test(pagesCheck.histRow), `the History list shows the visit: ${pagesCheck.histRow.slice(0, 40)}`);
+    const startCheck = await page(`(() => { const t = houseTest.state.active; return { recent: t.message.querySelector('.ob-recent')?.textContent || '', label: t.message.querySelector('.ob-home-label')?.textContent || '' }; })()`);
+    report(/example\.com/.test(startCheck.recent) && startCheck.label.length > 0, `a new tab's start page shows recent pages: ${JSON.stringify(startCheck).slice(0, 100)}`);
+    await shot('obscura-start');
+    const tabsBefore = await page(`houseTest.state.tabs.filter((t) => t.kind === 'obscura').length`);
+    await page(`(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 't', ctrlKey: true, bubbles: true, cancelable: true })); return true; })()`);
+    await sleep(500);
+    const tabsAfter = await page(`houseTest.state.tabs.filter((t) => t.kind === 'obscura').length`);
+    report(tabsAfter === tabsBefore + 1, `Ctrl+T in the browser opens a new browser tab: ${tabsBefore} -> ${tabsAfter}`);
+    report(pagesCheck.barHeight >= 36, `the browser's bar is taller: ${Math.round(pagesCheck.barHeight)} px`);
+    await page(`(() => { houseTest.history().length = 0; return true; })()`);
 
     // Closing the tab frees its page.
     await page(`(() => { houseTest.openInObscura('${base}/ok'); return true; })()`);

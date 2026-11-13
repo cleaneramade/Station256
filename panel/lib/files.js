@@ -707,7 +707,7 @@ async function ensureFolder(dir) {
 }
 
 module.exports = {
-  TRASH, DOOR, DOOR_FLAG, assertAllowed, assertReadable, windowsHome, list, makeFolder, makeFile, rename, trash, trashItems, restore, destroy, removeForever, emptyTrash, trashedNames,
+  TRASH, DOOR, DOOR_FLAG, doorIsOpen, assertAllowed, assertReadable, windowsHome, list, makeFolder, makeFile, rename, trash, trashItems, restore, destroy, removeForever, emptyTrash, trashedNames,
   paste, transfer, moveBack, properties, assertDoorOpen, importFromWindows, readText, ensureFolder, freeName, assertNotTrash,
   readDoc, docStat, writeDoc, replaceFile, replaceWith, placeFile, putBack, inTrash,
 };

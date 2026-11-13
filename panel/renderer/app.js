@@ -445,6 +445,7 @@ window.house.on('windows:changed', ({ count, main } = {}) => {
 
 // A terminal that has ended can't be shown anywhere else. Any other tab can move.
 // A video being saved stays put until it's done (video-tab.js).
+let tabDragging = false;
 const canMove = (tab) => !(tab.kind === 'term' && tab.ended) && !(tab.kind === 'video' && tab.job);
 
 function renderTabButtons() {
@@ -759,8 +760,31 @@ function addTabElement(tab, title) {
       const reach = lifted ? 12 : 36; // harder to pull off than to drop back, so it doesn't flicker
       return point.clientY < box.top - reach || point.clientY > box.bottom + reach;
     };
+    // A browser tab carried over another browser's page can join it side by side (split view).
+    let mergeTarget = null;
+    let mergeSide = null;
+    const mergeHover = (point) => {
+      if (tab.kind !== 'obscura' || tab.splitWith) return;
+      if (!mergeTarget) {
+        mergeTarget = state.tabs.filter((other) => other !== tab && other.kind === 'obscura' && !other.splitWith && !other.closed).sort((x, y) => y.usedAt - x.usedAt)[0] || null;
+        if (mergeTarget) activateTab(mergeTarget); // its page shows under the carried tab
+      }
+      if (!mergeTarget) return;
+      const box = $('doc-area').getBoundingClientRect();
+      const over = point.clientX >= box.left && point.clientX <= box.right && point.clientY >= box.top && point.clientY <= box.bottom;
+      mergeSide = over ? (point.clientX < box.left + box.width / 2 ? 'left' : 'right') : null;
+      showSnapZones(mergeSide);
+    };
+    const mergeEnd = (keep) => {
+      if (!mergeTarget) return;
+      showSnapZones(null);
+      if (!keep) activateTab(tab);
+      mergeTarget = null;
+      mergeSide = null;
+    };
     const lift = (on) => {
       if (on === lifted) return;
+      if (!on) mergeEnd(false);
       lifted = on;
       node.classList.toggle('tab-lifted', on);
       node.style.transform = '';
@@ -773,6 +797,7 @@ function addTabElement(tab, title) {
     };
     window.houseFrame.track(node, event, {
       begin() {
+        tabDragging = true; // a browser page must not take the keyboard focus (and the pointer) mid-drag
         activateTab(tab);
         node.classList.add('tab-moving');
         // It may be carried off to a window of its own: one gets ready out of sight meanwhile.
@@ -783,11 +808,13 @@ function addTabElement(tab, title) {
         if (lifted) {
           moveTabGhost(current.clientX, current.clientY);
           hoverOthers();
+          mergeHover(current);
         } else {
           moveTabTo(node, current.clientX - grabX);
         }
       },
       async end(_last, moved, cancelled) {
+        tabDragging = false;
         const letGo = lifted && !cancelled;
         // Let go off the strip, the tab stays out of sight while it moves, the gap in another
         // window stays open for it to land in, and its picture stays until it has landed.
@@ -797,6 +824,17 @@ function addTabElement(tab, title) {
         node.style.transform = '';
         if (!moved) return;
         sortTabs();
+        if (letGo && mergeTarget && mergeSide) {
+          // Let go on a browser page: the two join, nothing moves to another window.
+          const [target, side] = [mergeTarget, mergeSide];
+          mergeEnd(true);
+          node.classList.remove('tab-lifted');
+          hideTabGhost();
+          call('tabHover', false).catch(() => {});
+          mergeObscuraTabs(tab, target, side);
+          return;
+        }
+        if (letGo) mergeEnd(false);
         if (letGo && !await dropTab(tab)) {
           node.classList.remove('tab-lifted');
           hideTabGhost();
@@ -807,6 +845,17 @@ function addTabElement(tab, title) {
   });
   tab.el = node;
   tabsEl.insertBefore(node, newTabButton);
+}
+
+// The two halves a browser tab can be dropped on, shown over the page while it is carried.
+const snapZones = el('div', 'snap-zones');
+snapZones.hidden = true;
+snapZones.append(el('div', 'snap-zone left', 'Open on the left'), el('div', 'snap-zone right', 'Open on the right'));
+$('doc-area').append(snapZones);
+function showSnapZones(side) {
+  snapZones.hidden = !side;
+  snapZones.firstChild.classList.toggle('on', side === 'left');
+  snapZones.lastChild.classList.toggle('on', side === 'right');
 }
 
 // The tabs in the order they sit on the strip.
@@ -853,13 +902,15 @@ window.houseFrame.barDrag = {
 };
 
 function activateTab(tab) {
+  if (tab.mergedInto && state.tabs.includes(tab.mergedInto)) tab = tab.mergedInto; // a split view's tab is the one on the strip
   if (!preview.hidden) closePreview();
   state.active = tab;
   tab.usedAt = Date.now();
   state.tabs.forEach((other) => {
     other.el.classList.toggle('active', other === tab);
-    if (other.host) other.host.hidden = other !== tab;
+    if (other.host) other.host.hidden = other !== tab && other !== tab.splitWith; // a split view shows both halves
   });
+  $('doc-area').classList.toggle('split', Boolean(tab.splitWith));
   const isFiles = tab.kind === 'files';
   filesView.hidden = !isFiles;
   termArea.hidden = tab.kind !== 'term';
@@ -870,7 +921,8 @@ function activateTab(tab) {
   // Files opened in a page (doc-tab.js, video-tab.js), and the video editor (editor-tab.js).
   $('doc-area').hidden = tab.kind !== 'doc' && tab.kind !== 'video' && tab.kind !== 'song' && tab.kind !== 'editor' && tab.kind !== 'obscura';
   document.body.classList.toggle('term-active', !isFiles);
-  document.body.classList.toggle('obscura-front', tab.kind === 'obscura'); // the page gets the whole tab area (end of style.css)
+  document.body.classList.toggle('obscura-front', tab.kind === 'obscura' || tab.kind === 'editor'); // the page gets the whole tab area (style.css); the video editor needs the room too
+  if (typeof showZoomLabel === 'function') showZoomLabel();
   call('obscuraFront', tab.kind === 'obscura').catch(() => {}); // and Ctrl + / Ctrl - zoom the page, not Station (main.js)
   if (isFiles) {
     loadFolder();
@@ -1183,6 +1235,12 @@ window.house.on('term:show', ({ id } = {}) => {
 
 // A new tab opens on Home, as in File Explorer.
 newTabButton.addEventListener('click', () => openFilesTab(HOME_PAGE));
+// Right-click the plus: the same things as New, so a Web Browser (or anything else) opens straight away.
+newTabButton.addEventListener('contextmenu', (event) => {
+  event.preventDefault();
+  const box = newTabButton.getBoundingClientRect();
+  openMenu(box.left, box.bottom + 2, [{ label: 'Home', icon: 'home', run: () => openFilesTab(HOME_PAGE) }, ...newItems()]);
+});
 
 /* ---------- Explorer ---------- */
 
@@ -2625,7 +2683,7 @@ function invertSelection() {
 /* Two clipboards, as one: things copied in here, and files copied in Windows File Explorer.
    Whichever was copied last is what Paste uses, as in Explorer. Files from Windows can only be
    pasted while the Windows door is unlocked. A picture copied in Windows, such as a screen snip,
-   pastes as a new picture file, locked or not, the way copied text pastes anywhere. */
+   pastes as a new picture file, but only unlocked: locked, nothing comes in from Windows. */
 const canPaste = () => Boolean(state.clipboard) || (state.windowsFiles > 0 && state.status.doorOpen) || state.windowsPicture;
 
 function toClipboard(move) {
@@ -2671,6 +2729,7 @@ function pasteOrSay() {
   else pasteHere();
 }
 
+const lockedPictureNote = () => toast('Station 256 is locked. Unlock it to paste a picture copied in Windows.', 'Unlock', toggleDoor);
 const lockedNote = () => toast('Windows access is locked. Unlock it to bring files in.', 'Unlock', toggleDoor);
 
 async function pasteFromWindows() {
@@ -2685,7 +2744,11 @@ async function pasteFromWindows() {
 // The picture becomes "Pasted image <date> <time>.png" here, picked so you can see it. Undo puts
 // it in the Trash.
 async function pastePicture() {
-  const made = await attempt(() => call('pastePicture', state.active.path));
+  // Locked, a picture from Windows only comes in when it's a snip of Station itself (main.js): else it says so.
+  const made = await attempt(() => call('pastePicture', state.active.path).catch((error) => {
+    if (/door is locked/.test(error.message)) { lockedPictureNote(); return null; }
+    throw error;
+  }));
   if (!made) return;
   const undo = { type: 'copy', label: 'paste', paths: [made] };
   remember(undo);
@@ -3250,17 +3313,6 @@ async function projectMenu(project, x, y) {
   rightClickMenu(x, y, textActions(null), items);
 }
 
-// The arrow beside an open room's Enter Room: its rooms, to close one, or all of them.
-async function roomsMenu(project, button) {
-  const items = [
-    { label: 'New Room', icon: 'window_console', tint: 'tint-blue', run: () => openTerminal({ room: project.name }) },
-    '-',
-    ...await roomCloseItems(project.name),
-    { label: 'Close All Rooms', icon: 'checkbox_unchecked', tint: 'tint-red', run: () => closeRoom(project.name) },
-  ];
-  menuUnder(button, items);
-}
-
 // Short enough for a card's corner: "just now", "5 min ago", "2 h ago", "3 d ago", then "Nov 7".
 // Never a full date before 30 days (23 h 40 min rounds to "1 d ago", not to a date).
 function cardAgo(ms) {
@@ -3300,17 +3352,7 @@ function projectCard(project) {
   });
   const buttons = el('div', 'home-card-buttons');
   buttons.append(button);
-  if (up) {
-    const more = el('button', 'home-card-btn live more');
-    more.append(icon('chevron_down'));
-    more.title = 'Rooms in this project: close one, or all of them';
-    more.addEventListener('click', (event) => {
-      event.stopPropagation();
-      roomsMenu(project, more);
-    });
-    buttons.append(more);
-  }
-  buttons.append(previewButton(project));
+  // Rooms to close, Preview, New Room and the rest are in the card's right-click menu (projectMenu).
   const lifetime = project.tokensAllTime > 0 ? el('div', 'home-card-tokens', `${bigNumber(project.tokensAllTime)} tokens all time`) : null;
   if (lifetime) lifetime.title = 'Everything AI read and wrote in this project\nCounted from its conversation records';
   card.append(top, el('div', 'home-card-note', note), ...(lifetime ? [lifetime] : []), buttons);
@@ -4482,8 +4524,22 @@ function copyFromWindows(count, dir, run) {
   });
 }
 
+// Station's engine (main.js, lib/) changed on disk: one click starts it again with the new code.
+window.house.on('engine:changed', () => toast('Station 256 was updated behind the scenes.', 'Restart now', () => call('restartStation').catch(() => {})));
+
+// Lock is closed, so a copy stayed in the house (main.js). Said at most every 20 seconds.
+let lockedCopyToldAt = 0;
+window.house.on('clipboard:locked', (from) => {
+  if (from === 'in') { lockedPictureNote(); return; } // something copied in Windows, pasted here
+  if (Date.now() - lockedCopyToldAt < 20000) return;
+  lockedCopyToldAt = Date.now();
+  toast('Station 256 is locked. Unlock it (lock button, top right) to paste what you copy here into Windows.');
+});
+
 window.house.on('window:link', (message) => {
-  if (message.type === 'connected') {
+  if (message.type === 'page-scale') {
+    call('pageScale').then((scale) => { pageScale = scale; rezoomObscuraTabs(); }).catch(() => {});
+  } else if (message.type === 'connected') {
     dropAreaSent = ''; // the helper has just (re)joined, so it needs to know where the list is
     sendDropArea();
   } else if (message.type === 'drop-hover') {
@@ -4510,6 +4566,8 @@ Promise.all([call('windowsClipboard'), call('windowsPicture')]).then(([count, pi
 const OPTION_LABELS = { allow: 'Allow', ask: 'Ask', block: 'Block', readonly: 'Read only' };
 const rulesView = $('rules-view');
 let rulesData = null; // the rules and their choices, from panel/lib/rules.js
+let aiToolsData = null; // which AI tools the rooms have, from panel/lib/ai-tools.js
+let aiPick = null; // the tools ticked on the page, saved when Apply is pressed
 
 // House Rules is a page of its own, in a tab, like Agents. Done (or Esc) closes it and goes back
 // to the page you were on. Every rule applies to every room, the same way. The main rules come
@@ -4523,6 +4581,8 @@ async function showRules() {
   const data = await attempt(() => call('getRules'));
   if (!data) return null;
   rulesData = data;
+  aiToolsData = await attempt(() => call('aiToolsOverview'));
+  aiPick = null;
   if (open()) { // asked twice while the rules were loading
     activateTab(open());
     return open();
@@ -4569,6 +4629,8 @@ function renderRules(focusKey = '') {
   });
   page.append(legend);
 
+  if (aiToolsData) page.append(aiToolsSection());
+
   let focusButton = null;
   const group = (title, note, section) => {
     page.append(el('h3', 'rules-group', title));
@@ -4612,6 +4674,54 @@ function renderRules(focusKey = '') {
   rulesView.scrollTop = scroll;
   focusButton?.focus({ preventScroll: true }); // the keyboard stays on the choice just made
 }
+
+// Your AI tools: Station 256 installs none. Tick the ones you use and only those go into the rooms.
+function aiToolsSection() {
+  const data = aiToolsData;
+  if (!aiPick) aiPick = new Set(data.chosen || []);
+  const box = el('div', 'ai-tools');
+  box.append(el('h3', 'rules-group', 'Your AI tools'));
+  box.append(el('p', 'rules-note', data.chosen === null
+    ? 'None chosen yet. Station 256 installs no AI for you: tick the ones you use and only those are set up in your rooms.'
+    : 'Only the ones ticked are set up in your rooms. You sign in to each one yourself.'));
+  data.tools.forEach((tool) => {
+    const row = el('label', 'rule ai-tool');
+    const text = el('div', 'rule-text');
+    text.append(el('div', 'rule-label', `${tool.name} (${tool.maker})`), el('div', 'rule-detail', tool.signIn));
+    const tick = document.createElement('input');
+    tick.type = 'checkbox';
+    tick.checked = aiPick.has(tool.id);
+    tick.disabled = data.building;
+    tick.addEventListener('change', () => {
+      if (tick.checked) aiPick.add(tool.id); else aiPick.delete(tool.id);
+      apply.disabled = data.building || !changed();
+    });
+    row.append(text, tick);
+    box.append(row);
+  });
+  const same = (a, b) => a.length === b.length && a.every((id) => b.includes(id));
+  const changed = () => data.chosen === null || !same([...aiPick], data.chosen);
+  const foot = el('div', 'ai-tools-foot');
+  const apply = el('button', 'btn primary', data.chosen === null ? 'Save my choice' : 'Apply');
+  apply.type = 'button';
+  apply.disabled = data.building || !changed();
+  apply.addEventListener('click', async () => {
+    const next = await attempt(() => call('aiToolsSet', [...aiPick]));
+    if (next) { aiToolsData = next; renderRules(); }
+  });
+  const status = el('span', 'ai-tools-status', data.building
+    ? `Setting up your rooms... ${data.line}`
+    : data.error || (data.chosen !== null ? 'Rooms you open next use these.' : ''));
+  status.setAttribute('role', 'status');
+  foot.append(apply, status);
+  box.append(foot);
+  return box;
+}
+
+window.house.on('aitools:status', (data) => {
+  aiToolsData = data;
+  if (!rulesView.hidden && rulesData) renderRules();
+});
 
 rulesView.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && !$('dialog').open) {
@@ -5183,12 +5293,12 @@ $('house-note').addEventListener('click', () => toggleSystem(true));
 
 /* ---------- Window buttons and zoom ---------- */
 
-window.house.on('zoom:changed', (zoom) => {
-  $('zoom-level').textContent = `${Math.round((zoom / 1.35) * 100)}%`;
-});
-$('zoom-out').addEventListener('click', () => call('zoomStep', -1));
-$('zoom-in').addEventListener('click', () => call('zoomStep', 1));
-$('zoom-level').addEventListener('click', () => call('zoomReset'));
+// In a browser tab the footer's zoom is that page's (renderer/obscura-tab.js); anywhere else it's Station's.
+window.house.on('zoom:changed', () => setTimeout(rezoomObscuraTabs, 50)); // after this window has taken the new zoom
+const zoomHere = (direction) => (state.active?.kind === 'obscura' ? zoomObscura(state.active, direction) : call(direction ? 'zoomStep' : 'zoomReset', direction));
+$('zoom-out').addEventListener('click', () => zoomHere(-1));
+$('zoom-in').addEventListener('click', () => zoomHere(1));
+$('zoom-level').addEventListener('click', () => zoomHere(0));
 
 // Asked before the window closes, by the X or from the taskbar, if closing would stop anything.
 // With other windows open, only this window closes: its room terminals keep running in their

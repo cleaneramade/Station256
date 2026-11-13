@@ -9,27 +9,25 @@ irm https://raw.githubusercontent.com/<owner>/<repo>/main/installer/get.ps1 | ie
 
 ## What happens when you install
 
-1. It downloads the newest release and unpacks it in a temporary folder.
+1. It downloads the newest release and unpacks it in `%LOCALAPPDATA%\Station256-setup` (kept there so a restart cannot lose it).
 2. It looks at your PC (Windows version, virtualisation, memory, disk space).
 3. It asks **three things, and nothing else**:
    - how much storage to allow (a limit, not a reservation);
    - a drive letter, only if `L:` is already taken (otherwise the house uses `L:`);
-   - a password for the Linux side, typed twice and hidden. It is never saved.
+   - a password for the Linux side, typed twice and hidden. It is never saved as text. If Windows needs a restart, a copy only your Windows account can open is kept until the Linux user is made, then deleted.
 4. It shows a summary and asks `Go ahead? (Y/n)`.
-5. It turns on WSL if needed. If Windows asks for a restart, restart and run
-   the same command again. It carries on from where it stopped.
+5. It turns on WSL if needed. Windows then needs **one** restart. The installer offers to do it, and when you sign back in, setup carries on by itself and finishes. You do not run anything again and are not asked anything again. (If WSL is already on, there is no restart at all.)
 6. It installs its **own Linux, named `Station256`**. A Linux you already have
    (such as `Ubuntu`) is never touched.
-7. Inside that Linux it makes your user, installs Docker Engine, Node, git and
-   Claude Code, copies in Station 256, installs the walls and the sleep timer,
-   and builds the room image.
+7. Inside that Linux it makes your user, installs Docker Engine, Node and git,
+   copies in Station 256, installs the walls and the sleep timer, and builds the
+   room image. **It installs no AI tool and downloads no model.**
 8. On Windows it maps the drive, adds a Desktop and a Start menu shortcut
    called "Station 256", a right-click "Open Linux terminal here" on that drive
    only, and a step that puts the house to sleep when you log in.
-9. It checks everything and lists what is left for you. The one thing it cannot
-   do is connect Claude: the first room you open asks you to.
+9. It checks everything and tells you what is left for you, if anything.
 
-Click **Station 256** in Windows. It opens empty, with no sample data.
+Click **Station 256** in Windows. It opens empty, with no sample data. Open **House Rules** and tick the AI tools you use (Claude Code, Codex, Gemini). Only those are set up in your rooms, and you sign in to each yourself.
 
 The defaults it never asks about: the Linux user name is your Windows name,
 lowercased (or `station` if that is not a valid Linux name); the house sleeps

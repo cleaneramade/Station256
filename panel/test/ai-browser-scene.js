@@ -95,8 +95,8 @@ esac
       const go = numberOf(got.text, /button "Go"/);
       got = await sb('click', String(go));
       report(got.ok && /Page: clicked shoes/.test(got.text), `click ${go} presses the button: ${got.text.split('\n')[0]}`);
-      const dot = await page(`(() => { const t = ${aiTab}; return t && t.aiDot.style.transform; })()`);
-      report(/translate\(\d+px, \d+px\)/.test(dot || ''), `a dot shows where it clicked: ${dot}`);
+      const dot = await page(`(() => { const t = ${aiTab}; return t && !t.aiDot.hidden && t.aiDot.style.translate; })()`);
+      report(/^[\d.]+px [\d.]+px$/.test(dot || ''), `the AI's cursor shows where it clicked: ${dot}`);
       await shot('ai-browser-tab');
       const next = numberOf(got.text, /link "Next page"/);
       got = await sb('click', String(next));

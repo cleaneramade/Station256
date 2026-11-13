@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.2.0
+
+### Changed
+
+- **You choose your AI.** The installer no longer installs Claude Code, and the room blueprint no longer bakes in Claude, Codex and Gemini. Open House Rules > Your AI tools, tick the ones you use, and only those are set up (`room ai set claude,codex`, then `room build`). You sign in to each yourself.
+- **No model download.** The installer no longer fetches llama.cpp or a model. Local AI is yours to set up: bring your own `.gguf` file. `system/install-llama.sh` now fetches only the program (`LLAMA_MODEL=starter` adds one small example model).
+- **One restart, then it finishes by itself.** When Windows needs a restart to turn on WSL, the installer offers to do it, and carries on by itself when you sign back in. No second command, no repeated questions. The Linux password is kept only as a copy Windows protects for your account, and deleted once the Linux user is made.
+- **Honest disk wording.** The house disk size is whatever you enter, not a fixed 250 GB cap.
+- **A new README** with a tour of every capability in pictures, and a screenshot gallery that can be remade with `panel/test/shotrun.sh gallery`.
+- **Lock and screenshots.** With the Windows lock on, nothing crosses between Linux and Windows either way, except a screenshot of Station 256 pasted into Station 256. Station shows a notice when something is stopped.
+- **Browser.** Bookmarks, history, a new-tab button and Ctrl+T, a start page with bookmarks and recent pages, and a bigger bar.
+- **Project cards** show only Enter / Open Room. Everything else is in the right-click menu.
+
 ## 1.1.0
 
 The second public version of Station 256.

@@ -135,6 +135,12 @@ function setClipboard({ text, files, move } = {}) {
   return Promise.resolve(null);
 }
 
+// Lock is on and the house's copy reached Windows anyway (WSLg passes text on by itself): Windows
+// drops it again, but only if it still holds exactly that text, so a newer copy there stays.
+function clearClipboard(text) {
+  return typeof text === 'string' && text ? ask({ op: 'clipboard-clear', text }, null, 5000) : Promise.resolve(null);
+}
+
 const connected = () => Boolean(client);
 
 // The files copied in Windows File Explorer right now, as Windows paths.
@@ -209,6 +215,12 @@ async function openFile(file, pick = false) {
   return true;
 }
 
+// Windows' display scale as a number (1.25 for 125%), or null when the helper isn't there.
+async function displayScale() {
+  const reply = await ask({ op: 'display-scale' }, null, 5000);
+  return reply && reply.scale >= 1 && reply.scale <= 5 ? reply.scale : null;
+}
+
 // Opens a web page in your browser on Windows. Only http and https: the helper checks too.
 async function openUrl(url) {
   const reply = await ask({ op: 'open-url', url: String(url) }, null, 15 * 1000);
@@ -238,4 +250,4 @@ async function appInFront() {
   return reply && typeof reply.front === 'boolean' ? reply.front : null;
 }
 
-module.exports = { start, connected, list, move, watch, seam, dropArea, clipboardFiles, clipboardImage, setClipboard, measure, copyIn, openFile, openUrl, notify, unnotify, raiseStation, appInFront };
+module.exports = { start, connected, list, move, watch, seam, dropArea, clipboardFiles, clipboardImage, displayScale, setClipboard, clearClipboard, measure, copyIn, openFile, openUrl, notify, unnotify, raiseStation, appInFront };

@@ -1,5 +1,5 @@
 const {
-  app, BrowserWindow, Menu, clipboard, ipcMain, net, protocol, screen, webContents,
+  app, BrowserWindow, Menu, clipboard, ipcMain, nativeImage, net, protocol, screen, webContents,
 } = require('electron');
 const fs = require('fs');
 const path = require('path');
@@ -12,6 +12,7 @@ const archive = require('./lib/archive');
 const docx = require('./lib/docx');
 const thumbs = require('./lib/thumbs');
 const pictureDetails = require('./lib/picture-details');
+const snipMatch = require('./lib/snip-match');
 const video = require('./lib/video');
 const music = require('./lib/music');
 const editorApp = require('./lib/editor-app');
@@ -33,6 +34,7 @@ const stats = require('./lib/stats');
 const chatSave = require('./lib/chat-save');
 const liveUpdate = require('./lib/live-update');
 const llama = require('./lib/llama');
+const aiTools = require('./lib/ai-tools');
 const github = require('./lib/github');
 const schedules = require('./lib/schedules');
 const search = require('./lib/search');
@@ -160,6 +162,32 @@ const picturesInChecks = { png: null };
 // Test copies (checks) never put a window on the real screen, unless SHOT_SHOW=1 asks to watch them.
 const testCopy = () => Boolean(process.env.HOUSE_SHOTS || process.env.HOUSE_FITTEST || process.env.HOUSE_ZOOMWALK);
 const offScreen = () => Boolean((process.env.HOUSE_SHOTS || process.env.HOUSE_FITTEST) && !process.env.SHOT_SHOW);
+// Lock keeps what is copied in Windows out of Station, but a snip of Station itself shows only what
+// Station already shows, so it may come in (lib/snip-match.js). Decided when the snip is made, while
+// Station still looks the way it did in the snip.
+let snipOfStation = Promise.resolve(false);
+function judgeSnip() {
+  snipOfStation = (async () => {
+    if (await files.doorIsOpen()) return false; // unlocked: nothing to decide
+    const png = await copiedPicture();
+    if (!png) return false;
+    const bitmap = (image) => { const size = image.getSize(); return { w: size.width, h: size.height, data: image.toBitmap() }; };
+    const snip = nativeImage.createFromBuffer(png);
+    const shots = [];
+    for (const win of stations) if (!win.isDestroyed() && win.isVisible() && !win.isMinimized()) shots.push(await win.webContents.capturePage());
+    if (process.env.HOUSE_SNIPDEBUG) {
+      fs.mkdirSync('/tmp/snipdebug', { recursive: true });
+      fs.writeFileSync('/tmp/snipdebug/snip.png', snip.toPNG());
+      shots.forEach((shot, index) => fs.writeFileSync(`/tmp/snipdebug/station-${index}.png`, shot.toPNG()));
+    }
+    const started = Date.now();
+    const yes = snipMatch.isPieceOf(bitmap(snip), shots.map(bitmap));
+    if (process.env.HOUSE_SNIPDEBUG) console.log(`SNIP of Station: ${yes} (${snip.getSize().width}x${snip.getSize().height}, ${shots.map((shot) => `${shot.getSize().width}x${shot.getSize().height}`)}, ${Date.now() - started} ms)`);
+    return yes;
+  })().catch((error) => { console.log('snip check failed:', error.message); return false; });
+}
+// Whether a picture copied in Windows may come in now: unlocked, or a snip of Station itself.
+const pictureMayCome = async () => await files.doorIsOpen() || snipOfStation;
 const copiedPicture = () => (process.env.HOUSE_SHOTS ? Promise.resolve(picturesInChecks.png) : windowsLink.clipboardImage());
 // For places only Windows can read, such as a network drive.
 const windowsCopier = { measure: windowsLink.measure, copy: windowsLink.copyIn };
@@ -168,11 +196,13 @@ let lastFocused = null;
 // Checks never open anything on the screen; they read what would have opened here instead.
 const openedInChecks = [];
 
-// A link clicked in a terminal, opened in your browser on Windows. A link to localhost from a room
+// A link clicked anywhere in Station opens in Station's own Web Browser (a tab in the window that
+// asked), never in Windows' browser: nothing leaves the sandbox that way (owner, 2026-11-12).
+// A link clicked in a terminal, for example. A link to localhost from a room
 // terminal means a site running in that room, so it's opened through a path into the room
 // (lib/ports.js). That's usually the same port; if the house already has it, another one.
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '0.0.0.0', '[::1]', '[::]']);
-async function openLink(raw, termId) {
+async function openLink(raw, termId, asker) {
   let url;
   try {
     url = new URL(String(raw));
@@ -194,9 +224,15 @@ async function openLink(raw, termId) {
     openedInChecks.push(url.href);
     return url.href;
   }
-  await windowsLink.openUrl(url.href);
+  const win = (asker && BrowserWindow.fromWebContents(asker)) || [mainWindow, lastFocused, ...BrowserWindow.getAllWindows()].find((other) => other && !other.isDestroyed());
+  if (!win || win.isDestroyed()) throw new Error('Open a Station 256 window first: links open in its Web Browser.');
+  win.webContents.send('link:open', { url: url.href });
   return url.href;
 }
+
+// How big a page is at 100% in the Web Browser: Windows' display scale, so it matches a normal
+// browser. 1.25 until the helper says (shortcut: this PC's scale; the helper's answer replaces it).
+let pageScale = 1.25;
 
 // Opens a Preview page in an Obscura tab of the window that asked (renderer/obscura-tab.js), tied to
 // the project; in Windows' own browser if that window has closed meanwhile.
@@ -207,7 +243,7 @@ async function openPreview(room, url, asker) {
     asker.send('preview:open', { url: target.href, project: room });
     return target.href;
   }
-  return openLink(target.href);
+  return openLink(target.href, undefined, undefined);
 }
 
 // Words from voice typing (Win + H, caught by the Windows helper) go to the window you were in.
@@ -1040,6 +1076,9 @@ const api = {
   },
   videoCancel: (_event, job) => video.cancel(job),
   // Local AI (renderer/llama-tab.js, lib/llama.js): the reply comes back a bit at a time on llama:chat.
+  // Which AI tools the rooms have (renderer/app.js, House Rules; lib/ai-tools.js).
+  aiToolsOverview: () => aiTools.overview(),
+  aiToolsSet: (_event, ids) => aiTools.set(ids),
   llamaOverview: () => llama.overview(),
   llamaModel: (_event, file) => llama.modelInfo(file),
   llamaStart: (_event, options) => llama.start(options),
@@ -1083,10 +1122,11 @@ const api = {
     if (!sources.length) throw new Error('No files are copied in Windows anymore. Copy them in File Explorer again.');
     return files.importFromWindows(sources, dir, windowsCopier, progressTo(event.sender));
   },
-  // A picture copied in Windows, pasted into a folder as "Pasted image <date> <time>.png". Like
-  // copied text, it needs no unlocking: it's only what's on the clipboard, not Windows' files.
+  // A picture copied in Windows, pasted into a folder as "Pasted image <date> <time>.png". Locked, it stays
+  // out like everything else from Windows (and says so); unlocked, it pastes.
   windowsPicture: () => windowsPicture,
   pastePicture: async (_event, dir) => {
+    if (windowsPicture && !await pictureMayCome()) throw new Error('The Windows door is locked. Unlock it with the lock button at the top right, then try again.');
     const png = windowsPicture ? await copiedPicture() : null;
     if (!png) throw new Error('No picture is copied in Windows anymore. Copy it again.');
     return files.makeFile(dir, pastedImage.folderName(), png);
@@ -1278,6 +1318,7 @@ const api = {
   // Ctrl+V in a terminal: the text copied, or, when the newest copy in Windows is a picture, the
   // path of a file holding it, saved where the terminal can reach it (lib/pasted-image.js).
   termPaste: async (_event, id) => {
+    if (windowsPicture && !await pictureMayCome()) { toAll('clipboard:locked', 'in'); return ''; } // locked: nothing from Windows comes in, and it says so
     const png = windowsPicture ? await copiedPicture() : null;
     if (!png) return clipboard.readText();
     const room = terminals.roomOf(id);
@@ -1288,7 +1329,9 @@ const api = {
   clipboardWrite: (_event, text) => { windowsPicture = false; return sharedClipboard.copyText(text); },
   clipboardFiles: (_event, paths, move) => { windowsPicture = false; return sharedClipboard.copyFiles(paths, move); },
 
-  openLink: (_event, url, termId) => openLink(url, termId),
+  pageScale: () => pageScale,
+  restartStation: () => { app.relaunch(); app.quit(); return true; },
+  openLink: (event, url, termId) => openLink(url, termId, event.sender),
   // One-click Preview (lib/preview.js): what to do for a project, then run it in its room terminal.
   previewBegin: async (event, name) => {
     const found = await preview.begin(name, ports.portsOf);
@@ -1379,6 +1422,8 @@ function toAll(channel, payload) {
   for (const win of stations) if (!win.isDestroyed()) win.webContents.send(channel, payload);
 }
 llama.onStatus((state) => toAll('llama:status', state));
+aiTools.onStatus((state) => toAll('aitools:status', state));
+sharedClipboard.setBlockedNotice(() => toAll('clipboard:locked'));
 
 // A new version of the pages (lib/live-update.js). Styles change at once in every window; for page
 // code, each window reloads itself when nobody's using it, with its tabs. The window kept ready for
@@ -1471,6 +1516,9 @@ app.whenReady().then(() => {
   if (!process.env.HOUSE_SHOTS && !process.env.HOUSE_FITTEST) ports.start();
   // Changes to the pages show without a restart. Not in checks: they run from copies being changed.
   if (!checking) liveUpdate.watchPanel(__dirname, pagesChanged);
+  // The part behind the windows (main.js, lib/) can't swap itself while running: the windows offer
+  // a Restart button instead, so a change can be tried with one click.
+  if (!checking) liveUpdate.watchPages([[__dirname, (name) => name === 'main.js'], [path.join(__dirname, 'lib'), (name) => /^[\w.-]+\.js$/.test(name)]], () => { if (!quitting) toAll('engine:changed'); });
   if (process.env.HOUSE_SHOTS) {
     // As if a picture (or, with null, something else) had just been copied in Windows.
     const copyPicture = (png) => {
@@ -1504,11 +1552,13 @@ app.whenReady().then(() => {
       const ours = message.ours === true;
       windowsClipboardCount = ours ? 0 : Number(message.files) || 0;
       windowsPicture = !ours && message.image === true;
+      if (windowsPicture) judgeSnip(); else snipOfStation = Promise.resolve(false);
       sharedClipboard.windowsChanged(message);
       passed = { type: 'clipboard', files: windowsClipboardCount, image: windowsPicture, ours };
     }
     // What's copied, and the helper (re)joining, matter to every window. Everything else (snapping,
     // seams, files dragged in) is about the window the helper follows: the one used last.
+    if (passed.type === 'connected') windowsLink.displayScale().then((scale) => { if (scale && scale !== pageScale) { pageScale = scale; toAll('window:link', { type: 'page-scale' }); } }).catch(() => {});
     if (passed.type === 'clipboard' || passed.type === 'connected') toAll('window:link', passed);
     else helperWindow()?.webContents.send('window:link', passed);
   });

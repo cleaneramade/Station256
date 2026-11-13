@@ -1,9 +1,9 @@
 export const PANEL_CONFIG = {
 	panels: {
-		tools: 25,
-		preview: 50,
-		properties: 25,
-		mainContent: 50,
-		timeline: 50,
+		tools: 22,
+		preview: 48,
+		properties: 30,
+		mainContent: 72,
+		timeline: 28,
 	},
 } as const;
