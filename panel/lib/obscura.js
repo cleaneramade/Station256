@@ -6,7 +6,7 @@
 // not notifications, not the clipboard), they can only go to http(s) addresses, and whatever they
 // download lands in Downloads and is never opened. The page itself sits in a sandbox; this file
 // is the wall around it.
-const { BrowserWindow, screen, session } = require('electron');
+const { app, BrowserWindow, screen, session, webContents } = require('electron');
 const fs = require('fs');
 const path = require('path');
 
@@ -57,8 +57,8 @@ function freeName(dir, wanted) {
 function start({ downloadsDir }) {
   const ses = session.fromPartition(PARTITION);
   obscuraSession = ses;
-  // Looks like an ordinary Chrome to sites, not "Electron".
-  ses.setUserAgent(ses.getUserAgent().replace(/\s(Electron|house-panel|station-256)\/\S+/gi, ''));
+  // Looks like one ordinary Chrome on Linux to sites, not "Electron" (see identify below).
+  ses.setUserAgent(CHROME_UA, app.getLocale());
 
   // No permissions: not asked, not remembered, not "granted" by a check either.
   ses.setPermissionRequestHandler((_contents, permission, callback) => callback(PERMITTED.has(permission)));
@@ -76,6 +76,25 @@ function start({ downloadsDir }) {
     let ok = false;
     try { ok = await guard(details); } catch { /* a wall that fails says no */ }
     callback({ cancel: !ok });
+  });
+
+  // Electron sends no Sec-CH-UA hints of its own, so they are added here as Chrome would: the short ones
+  // on every secure request, the full version list once a site has asked for it (Accept-CH).
+  const wantsFull = new Set();
+  ses.webRequest.onHeadersReceived((details, callback) => {
+    try {
+      const asked = Object.entries(details.responseHeaders || {}).some(([k, v]) => /^(accept|critical)-ch$/i.test(k) && /full-version-list/i.test([].concat(v).join()));
+      if (asked) wantsFull.add(new URL(details.url).origin);
+    } catch { /* not a readable address: nothing to remember */ }
+    callback({});
+  });
+  ses.webRequest.onBeforeSendHeaders((details, callback) => {
+    const headers = details.requestHeaders;
+    if (/^(https:|http:\/\/(127\.0\.0\.1|localhost)[:/])/i.test(details.url)) {
+      Object.assign(headers, { 'sec-ch-ua': HINT_BRANDS(MAJOR, '24'), 'sec-ch-ua-mobile': '?0', 'sec-ch-ua-platform': '"Linux"' });
+      try { if (wantsFull.has(new URL(details.url).origin)) headers['sec-ch-ua-full-version-list'] = HINT_BRANDS(FULL, '24.0.0.0'); } catch { /* skipped */ }
+    }
+    callback({ requestHeaders: headers });
   });
 
   // A download goes to Downloads under a free name, and is never opened.
@@ -111,6 +130,24 @@ function start({ downloadsDir }) {
 
 const owns = (guest) => !!obscuraSession && guest.session === obscuraSession;
 
+// Websites see a dark look (prefers-color-scheme) in the browser tabs only, to match the owner's Windows
+// browser. Through each page's own debugger: Electron has no per-page setting, and nativeTheme would
+// change Station's own pages too. The look stays through navigation; it is set again as each page loads.
+let dark = false;
+const schemed = new WeakSet(); // pages that were ever given a look
+async function applyScheme(guest) {
+  try {
+    if (!dark && !schemed.has(guest)) return; // never touched: nothing to undo
+    schemed.add(guest);
+    if (!guest.debugger.isAttached()) guest.debugger.attach('1.3');
+    await guest.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: dark ? 'dark' : 'light' }] });
+  } catch { /* the page is gone, or something else holds its debugger: it keeps its look */ }
+}
+function setDark(on) {
+  dark = on === true;
+  webContents.getAllWebContents().filter(owns).forEach(applyScheme);
+}
+
 // The Station windows whose front tab is Obscura (the tab says so). There Ctrl + and Ctrl - zoom the
 // page, even from the address bar, so main.js leaves those keys alone.
 const inFront = new WeakSet();
@@ -130,8 +167,55 @@ function browserKey(input) {
   return ['l', 'r', 'f', 'w', 't', '+', '=', '-', '_', '0', 'Tab'].includes(lower === 'tab' ? 'Tab' : lower);
 }
 
+// One consistent real-Chrome identity for every page: the user-agent text, the Sec-CH-UA hints and
+// window.chrome all say "Chrome <major> on Linux" (the platform stays honest). Sent through the page's own
+// debugger, which Electron has no setting for; it stays through navigation. If the debugger can't be
+// attached the page still loads, just with Electron's own look.
+const FULL = process.versions.chrome;
+const MAJOR = FULL.split('.')[0];
+const CHROME_UA = `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${MAJOR}.0.0.0 Safari/537.36`;
+// What real Chrome has on window.chrome for web pages (only filled where missing; never throws).
+const CHROME_OBJECT = `(() => { try {
+  const c = window.chrome || (window.chrome = {});
+  const t = Date.now() / 1000;
+  if (!c.app) c.app = { isInstalled: false, InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
+    RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' },
+    getDetails() { return null; }, getIsInstalled() { return false; }, runningState() { return 'cannot_run'; } };
+  if (!c.csi) c.csi = () => ({ onloadT: Date.now(), startE: Math.round(t * 1000) - 300, pageT: 300, tran: 15 });
+  if (!c.loadTimes) c.loadTimes = () => ({ requestTime: t - 0.3, startLoadTime: t - 0.3, commitLoadTime: t - 0.2, finishDocumentLoadTime: t - 0.1,
+    finishLoadTime: t - 0.05, firstPaintTime: t - 0.1, firstPaintAfterLoadTime: 0, navigationType: 'Other', wasFetchedViaSpdy: true,
+    wasNpnNegotiated: true, npnNegotiatedProtocol: 'h2', wasAlternateProtocolAvailable: false, connectionInfo: 'h2' });
+  if (!c.runtime) c.runtime = {};
+} catch {} })();`;
+const HINT_BRANDS = (version, grease) => `"Chromium";v="${version}", "Google Chrome";v="${version}", "Not?A_Brand";v="${grease}"`;
+const identity = () => ({
+  userAgent: CHROME_UA,
+  platform: 'Linux x86_64',
+  acceptLanguage: app.getLocale(),
+  userAgentMetadata: {
+    brands: [{ brand: 'Chromium', version: MAJOR }, { brand: 'Google Chrome', version: MAJOR }, { brand: 'Not?A_Brand', version: '24' }],
+    fullVersionList: [{ brand: 'Chromium', version: FULL }, { brand: 'Google Chrome', version: FULL }, { brand: 'Not?A_Brand', version: '24.0.0.0' }],
+    fullVersion: FULL, platform: 'Linux', platformVersion: '', architecture: 'x86', bitness: '64', model: '', mobile: false, wow64: false,
+  },
+});
+async function identify(guest) {
+  try {
+    if (!guest.debugger.isAttached()) guest.debugger.attach('1.3');
+    await guest.debugger.sendCommand('Emulation.setUserAgentOverride', identity());
+    await guest.debugger.sendCommand('Page.enable');
+    await guest.debugger.sendCommand('Page.addScriptToEvaluateOnNewDocument', { source: CHROME_OBJECT });
+  } catch { /* the page is gone, or something else holds its debugger: it keeps Electron's look */ }
+}
+
 // One Obscura page: where it may go, what it may open, what it tells the tab.
 function guestHook(guest) {
+  // If someone else takes the debugger and lets go, take it back (not while the page is closing).
+  guest.debugger.on('detach', () => {
+    // A moment later, so a page that is closing is gone by then (taking it back at once hung the close).
+    setTimeout(() => { if (!guest.isDestroyed() && !guest.debugger.isAttached()) identify(guest).then(() => applyScheme(guest)); }, 200);
+  });
+  identify(guest);
+  guest.on('dom-ready', () => applyScheme(guest));
   guest.on('will-prevent-unload', (event) => event.preventDefault());
   // A page that asks for a window gets a new Obscura tab, never a window of Electron's own.
   // At most 3 new tabs in 5 seconds, however many pages ask.
@@ -239,4 +323,4 @@ function guardAttach(event, webPreferences, params) {
   params.partition = PARTITION;
 }
 
-module.exports = { start, owns, guardAttach, setFront, isFront, setGuard, PARTITION, mayGoTo, freeName };
+module.exports = { start, owns, setDark, guardAttach, setFront, isFront, setGuard, PARTITION, mayGoTo, freeName };

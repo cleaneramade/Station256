@@ -31,16 +31,28 @@ function fitLines(text, width, max = 2) {
   return kept.join('\n');
 }
 
-// Hover text only where it helps. Returns the text to show for an element with a tip, or null for none:
-// an icon-only control gets its tip; cut-off text shows in full; a tip that adds something the screen
-// doesn't (a second line, a shortcut, or an element marked data-tip-fact) shows as written.
-// Plain text that fits gets nothing. Screen-reader labels are not touched by any of this.
+// Hover text only where you can't tell what a thing is. Returns the text to show for an element with a tip,
+// or null for none: an icon-only control gets its whole tip (shortcut and all); cut-off text shows in full
+// (its own text, nothing extra); an element marked data-tip-fact (an explicit opt-in, none use it today)
+// shows as written. Text that fits gets nothing, whatever its tip says. Screen-reader labels are not touched.
 function tipFor(el) {
   const tip = el.dataset.tip || '';
   if (!el.textContent.trim()) return tip;
-  if (el.hasAttribute('data-tip-fact') || tip.includes('\n') || /\((Ctrl|Alt|Shift|Esc|F\d+|Space)\b/.test(tip)) return tip;
+  if (el.hasAttribute('data-tip-fact')) return tip;
+  if (!el.getClientRects().length) return el.textContent.trim().replace(/\s+/g, ' '); // text hidden (icon-only tab): say it
   const cut = [el, ...el.querySelectorAll('*')].some((node) => node.scrollWidth > node.clientWidth + 1 || node.scrollHeight > node.clientHeight + 1);
   return cut ? el.textContent.trim().replace(/\s+/g, ' ') : null;
+}
+
+// Cut-off text with no tip of its own (a tab title, a sidebar name): the nearest ancestor drawn with "…".
+// tipFor then answers with its full text.
+function cutOffAt(node) {
+  const hidden = node.closest?.('.tab')?.querySelector('.tab-title');
+  if (hidden && !hidden.getClientRects().length && hidden.textContent.trim()) return hidden;
+  for (let el = node; el instanceof Element && el !== document.body; el = el.parentElement) {
+    if (getComputedStyle(el).textOverflow === 'ellipsis' && el.scrollWidth > el.clientWidth + 1 && el.textContent.trim()) return el;
+  }
+  return null;
 }
 
 (function tooltips() {
@@ -119,7 +131,7 @@ function tipFor(el) {
   }, { passive: true });
 
   document.addEventListener('pointerover', (event) => {
-    const el = event.target.closest?.('[data-tip]') || null;
+    const el = event.target.closest?.('[data-tip]') || cutOffAt(event.target);
     if (el === hovered) return;
     hide();
     if (!el) return;

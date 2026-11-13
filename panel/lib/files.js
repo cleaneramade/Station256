@@ -510,16 +510,18 @@ async function assertDoorOpen() {
 async function importFromWindows(sources, dir, windows, onProgress = () => {}) {
   await assertAllowed(dir);
   if (isInside(path.resolve(dir), TRASH)) throw new Error('Files can\'t be brought straight into the trash.');
-  await assertDoorOpen();
   const names = sources.map((source) => String(source).split('\\').filter(Boolean).pop() || String(source));
   onProgress({ done: 0, total: 0, names, measuring: true });
 
-  // Works out where each one is, and checks it, before anything is copied.
+  // Works out where each one is, and checks it, before anything is copied. Locked, the C: mount
+  // isn't there, so C: files come in through Windows' helper like any other drive (decided once).
+  const doorOpen = await fs.access(DOOR_FLAG).then(() => true, () => false);
   const items = [];
   for (const [index, windowsPath] of sources.entries()) {
     const item = { windowsPath, name: names[index], size: 0 };
     try {
-      const from = whereFrom(windowsPath);
+      let from = whereFrom(windowsPath);
+      if (from.door && !doorOpen) from = { windows: windowsPath };
       if (from.door) {
         item.source = await fs.realpath(from.door);
         if (!isInside(item.source, DOOR) || item.source === DOOR) throw new Error('That can\'t be brought in.');

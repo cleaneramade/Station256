@@ -35,9 +35,9 @@ function room(args, timeout = 20000) {
 }
 
 // Each room terminal tab is its own Herdr session in the room, named tab-1, tab-2 and so on, so
-// whatever runs in it keeps going when the connection closes. The first is "Room: X", then "(2)".
+// whatever runs in it keeps going when the connection closes. The first is just the project's name, then "(2)".
 const tabNumber = (tab) => Number(TAB.exec(tab)?.[1] || 0);
-const tabTitle = (name, tab) => (tabNumber(tab) > 1 ? `Room: ${name} (${tabNumber(tab)})` : `Room: ${name}`);
+const tabTitle = (name, tab) => (tabNumber(tab) > 1 ? `${name} (${tabNumber(tab)})` : name);
 
 const parkKey = (name, tab) => `${name}\t${tab}`;
 const isParkKey = (key) => typeof key === 'string' && NAME.test(key.split('\t')[0] || '') && TAB.test(key.split('\t')[1] || '') && key.split('\t').length === 2;

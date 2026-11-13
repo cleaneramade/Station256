@@ -9,6 +9,20 @@ if (Test-Path "$PSScriptRoot\house.json") {
 }
 $dir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $wsl = 'C:\Windows\System32\wsl.exe'
+
+# After WSL restarts, Windows leaves the L: drive on a red X and never reconnects it. Only call this
+# once the house is running (touching L: wakes it). Maps the letter again the way the installer does,
+# but only if it's missing or points at the house; a letter pointing anywhere else is never touched.
+function Repair-HouseDrive([string]$letter, [string]$distro) {
+    try {
+        $reg = "HKCU:\Network\$letter"
+        $remote = if (Test-Path $reg) { (Get-ItemProperty $reg).RemotePath }
+        if ($remote -and $remote -ne "\\wsl.localhost\$distro") { return }
+        if (Test-Path "${letter}:\") { return }
+        cmd.exe /c "net use ${letter}: /delete /y" *> $null
+        cmd.exe /c "net use ${letter}: \\wsl.localhost\$distro /persistent:yes" *> $null
+    } catch { }
+}
 Start-Process 'C:\Windows\System32\conhost.exe' -ArgumentList "--headless powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$dir\house-helper.ps1`"" -WorkingDirectory $env:USERPROFILE
 
 # If it's already open, this brings it forward, even from minimized. Only Windows can do that:
@@ -48,7 +62,7 @@ public static class Station256Window {
   }
 }
 '@
-if ([Station256Window]::BringForward()) { exit 0 }
+if ([Station256Window]::BringForward()) { Repair-HouseDrive $houseDrive $houseDistro; exit 0 }
 
 function Start-App {
     Start-Process 'C:\Windows\System32\conhost.exe' -ArgumentList "--headless $wsl -d $houseDistro --cd /home/$houseUser/house/panel -e /home/$houseUser/house/panel/start.sh" -WorkingDirectory $env:USERPROFILE
@@ -68,9 +82,9 @@ function Wait-App {
 }
 
 Start-App
-if (Wait-App) { exit 0 }
+if (Wait-App) { Repair-HouseDrive $houseDrive $houseDistro; exit 0 }
 Start-App
-if (Wait-App) { exit 0 }
+if (Wait-App) { Repair-HouseDrive $houseDrive $houseDistro; exit 0 }
 
 Add-Type -AssemblyName System.Windows.Forms
 [void][System.Windows.Forms.MessageBox]::Show(

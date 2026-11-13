@@ -24,6 +24,8 @@ const SCENES = {
   obscura: require('./obscura-scene'),
   // The same tab against a hostile site: escapes, windows, permissions, downloads, keys (test/obscura-attacks.js).
   obscuraAttacks: require('./obscura-attacks'),
+  // The browser tab looks like one real Chrome on Linux everywhere: headers, JS, window.chrome (test/obscura-identity.js).
+  obscuraIdentity: require('./obscura-identity'),
   // The README's pictures, with made-up projects only (test/gallery-scene.js).
   ...require('./gallery-scene'),
   // Word documents in the preview (test/docx-scene.js).
@@ -2410,14 +2412,14 @@ const SCENES = {
     }
     await page(`state.status = wasStatus; renderHouseNote(); true`);
 
-    // A screen snip copied in Windows is refused while locked, like everything else from Windows.
+    // A picture copied in Windows still pastes while locked: the clipboard belongs to Windows.
     {
       const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
       const home = await page(`houseTest.state.home`);
       global.stationChecks.copyPicture(png);
       const made = await page(`window.house.call('pastePicture', ${JSON.stringify(home)}).then((made) => made, (error) => 'ERR ' + error.message)`);
       global.stationChecks.copyPicture(null);
-      report(typeof made === 'string' && /^ERR.*locked/.test(made), `a screen snip is refused while locked: ${made}`);
+      report(typeof made === 'string' && !/^ERR/.test(made), `a screen snip pastes while locked: ${made}`);
       if (typeof made === 'string' && !/^ERR/.test(made)) require('fs').rmSync(made, { force: true });
     }
 
@@ -2461,23 +2463,29 @@ const SCENES = {
       ipcMain.handle('call', real);
     }
   },
-  // Locking asks nothing. The page is told it's unlocked, with a room holding it, to see what a
-  // person would. The real lock is never touched: locking goes to a stand-in that only counts.
+  // Locking asks nothing and closes nothing. The page is told it's unlocked, with a room holding it,
+  // to see what a person would. The real lock is never touched: locking goes to a stand-in that
+  // only counts. Nothing may close a room, so the note must say they stay open.
   async lock({ page, shot }) {
     const house = require('../lib/house');
     const realCloseDoor = house.closeDoor;
     let locks = 0;
+    let closed = 0;
+    const realCloseRoom = house.closeRoom;
     house.closeDoor = async () => { locks += 1; };
+    house.closeRoom = async () => { closed += 1; }; // the old lock closed rooms through this
     try {
       page(`(() => { state.status = { ...state.status, doorOpen: true, rooms: [{ name: 'SampleApp', windowsDoor: true }] }; toggleDoor(); return true; })()`);
       await sleep(1500);
       const [asked, said] = await page(`[document.getElementById('dialog').open, document.querySelector('.toast-text')?.textContent || '']`);
       console.log(`${asked ? 'FAIL' : 'PASS'} lock: ${asked ? 'a pop-up opened' : 'no pop-up'}; said: ${JSON.stringify(said)}`);
       console.log(`${locks === 1 ? 'PASS' : 'FAIL'} lock: locked ${locks} time(s), through the stand-in`);
+      console.log(`${closed === 0 && /stay open/.test(said) ? 'PASS' : 'FAIL'} lock: no room closed (${closed}) and the note says they stay open`);
       await shot('lock-toast');
       if (asked) await page(`document.getElementById('dialog').close(); true`);
     } finally {
       house.closeDoor = realCloseDoor;
+      house.closeRoom = realCloseRoom;
     }
     await page(`houseTest.refreshStatus().then(() => true)`);
   },
@@ -2759,7 +2767,7 @@ const SCENES = {
     set('idle', 'tab-2');
     screen('');
     // Two terminal tabs standing in for SampleApp's room terminals.
-    for (const [tabName, title] of [['tab-1', 'Room: SampleApp'], ['tab-2', 'Room: SampleApp (2)']]) {
+    for (const [tabName, title] of [['tab-1', 'SampleApp'], ['tab-2', 'SampleApp (2)']]) {
       await page(`houseTest.openTerminal({}).then((tab) => { tab.room = 'SampleApp'; tab.tab = '${tabName}'; tab.el.querySelector('.tab-title').textContent = '${title}'; return true; })`);
       await sleep(800);
     }
@@ -4164,6 +4172,10 @@ Object.assign(SCENES, require('./selfheal-scene')); // self-recovery
 Object.assign(SCENES, require('./rightclick-scene')); // Right-click everywhere
 Object.assign(SCENES, require('./audit-scene')); // Release audit: demo files, real clicks, results on disk
 Object.assign(SCENES, require('./ai-browser-scene')); // An AI in a room using the Web Browser
+Object.assign(SCENES, require('./snap-layouts-scene')); // Tabs and windows side by side
+Object.assign(SCENES, require('./tab-split-scene')); // Dragging a tab onto the page to split
+Object.assign(SCENES, require('./files-split-scene')); // Two Files tabs side by side
+Object.assign(SCENES, require('./folder-views-scene')); // Each folder keeps its own view and sort
 Object.assign(SCENES, require('./ux-scene')); // The audit's smaller changes
 Object.assign(SCENES, require('./llama-real-scene')); // Local AI with real models (run alone, see the file)
 

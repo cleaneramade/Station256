@@ -74,20 +74,33 @@ echo "== the Windows door"
 sudo -n /usr/local/sbin/house-rules door-open
 start
 check "a room got the door" "$(docker inspect -f '{{index .Config.Labels "house.door"}}' room-$N)" "open"
-sudo -n /usr/local/sbin/house-rules door-close
-check "lock stays open while a room still holds the door" \
+seen() { docker exec room-$N sh -c 'test -r /windows/Windows/win.ini && echo can-read || echo cannot'; }
+holder() { docker exec -d room-$N sh -c 'echo $$ > /tmp/holder.pid; cd /windows && exec sleep 600'; sleep 2; }
+check "the room can read Windows files" "$(seen)" "can-read"
+# A shell sitting in /windows keeps its copy busy: the lock must fail and say so, not pretend.
+holder
+check "locking with a program inside /windows fails" \
+  "$(js "require('$H').closeDoor().then(() => console.log('claimed-locked'), (e) => console.log(/can still read/.test(e.message) ? 'failed-and-says-why' : e.message))")" "failed-and-says-why"
+check "the lock still shows open" \
   "$(js "require('$H').status().then((s) => console.log(s.doorOpen))")" "true"
+check "the failed lock put the flag back" "$(test -e /run/house/windows-door-open && echo back || echo missing)" "back"
+check "the room is still running" "$(docker ps -q --filter name=room-$N | wc -l | tr -d ' ')" "1"
+docker exec room-$N sh -c 'kill "$(cat /tmp/holder.pid)"'
+sleep 1
 sudo -n /usr/local/sbin/house-rules door-open
-check "locking while Docker is broken reports a failure" \
-  "$(broken "require('$H').closeDoor().then(() => console.log('claimed-locked'), () => console.log('failed'))")" "failed"
-check "the room is still counted as holding the door" \
-  "$(js "require('$H').status().then((s) => console.log(s.doorOpen))")" "true"
-sudo -n /usr/local/sbin/house-rules door-open
-check "locking closes the room holding it" \
+check "locking never closes the room" \
   "$(js "require('$H').closeDoor().then(() => console.log('locked'), (e) => console.log(e.message))")" "locked"
-check "no room left" "$(docker ps -q --filter name=room-$N | wc -l | tr -d ' ')" "0"
+check "the room is still running after the lock" "$(docker ps -q --filter name=room-$N | wc -l | tr -d ' ')" "1"
+check "the room can no longer read Windows files" "$(seen)" "cannot"
+check "/windows is empty in the room" "$(docker exec room-$N sh -c 'ls -A /windows | wc -l')" "0"
 check "lock now shows closed" "$(js "require('$H').status().then((s) => console.log(s.doorOpen))")" "false"
 check "drive unmounted" "$(mountpoint -q /mnt/windows-door && echo mounted || echo unmounted)" "unmounted"
+sudo -n /usr/local/sbin/house-rules door-open
+check "unlocking again doesn't give the running room the door back" "$(seen)" "cannot"
+check "and it isn't shown as seeing Windows files" \
+  "$(js "require('$H').status().then((s) => console.log(s.rooms.filter((r) => r.windowsDoor).length))")" "0"
+sudo -n /usr/local/sbin/house-rules door-close
+room close "$N" >/dev/null
 check "Docker failure isn't reported as no rooms" \
   "$(broken "require('$H').status().then((s) => console.log(s.dockerOk))")" "false"
 

@@ -52,6 +52,9 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | UV_NO_MODIFY_PATH=1 sh \
  && /home/dev/.local/bin/uv tool install graphifyy==0.9.106 \
  && /home/dev/.local/bin/graphify --version
 LABEL house.graphify="1"
+# Marks a room-start that also copies the house's shared skills and agents in; bin/room rebuilds
+# a blueprint without it.
+LABEL house.sharedskills="1"
 # Gemini's light look, to match the white terminals. Rooms start fresh from this
 # blueprint, so it is the starting point, not something kept over a choice.
 RUN mkdir -p /home/dev/.gemini \

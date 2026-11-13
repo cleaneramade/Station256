@@ -38,6 +38,32 @@ fs.renameSync(file + ".new", file);
 [ -e /home/dev/.claude/.ponytail-band ] || echo off > /home/dev/.claude/.ponytail-band
 [ -e /home/dev/.claude/.ponytail-statusline-nudged ] || : > /home/dev/.claude/.ponytail-statusline-nudged
 
+# The owner's skills and helper agents, from the house's own ~/.claude (mounted read-only by
+# bin/room). Copied, not mounted: skills must stay writable, and a skill made in this room must
+# survive. Newer files only, nothing deleted. synced is Anthropic's built-ins and graphify is set
+# up below. A skill that ships scripts/install.js gets it run once, to put its hooks into this
+# room's settings.json (skipped while its hooks are there). Running it is fine only because the
+# share is the owner's own house ~/.claude, read-only. Hooks must be in before the first claude.
+SHARE=/usr/local/share/station-256/claude
+CL=/home/dev/.claude
+if [ -d "$SHARE/skills" ]; then
+  for dir in "$SHARE"/skills/*/; do
+    [ -d "$dir" ] || continue
+    skill="$(basename "$dir")"
+    case "$skill" in synced|graphify) continue ;; esac
+    mkdir -p "$CL/skills" && cp -rLu --preserve=timestamps "${dir%/}" "$CL/skills/" 2>>/tmp/room-start.log \
+      || echo "Shared skill $skill was not copied in" >> /tmp/room-start.log
+    if [ -f "$CL/skills/$skill/scripts/install.js" ] && ! grep -qs "/skills/$skill/" "$CL/settings.json"; then
+      CLAUDE_HOME="$CL" timeout 60 node "$CL/skills/$skill/scripts/install.js" --no-open >>/tmp/room-start.log 2>&1 \
+        || echo "Shared skill $skill did not finish installing" >> /tmp/room-start.log
+    fi
+  done
+fi
+if [ -d "$SHARE/agents" ]; then
+  mkdir -p "$CL/agents" && cp -Lu --preserve=timestamps "$SHARE"/agents/*.md "$CL/agents/" 2>>/tmp/room-start.log \
+    || echo "Shared agents were not copied in" >> /tmp/room-start.log
+fi
+
 # Graphify's /graphify skill for Claude, in this project's own Claude folder. Then, in the
 # background so the room isn't slowed, Graphify is updated and its skill refreshed.
 graphify install --platform claude >/dev/null 2>>/tmp/room-start.log \

@@ -14,6 +14,7 @@ const ROOM = path.join(HOME, '.local', 'bin', 'room');
 const STATE = path.join(HOME, '.local', 'state', 'house');
 const HELPER_CONFIG = path.join(HOME, '.config', 'house', 'windows-helper.json');
 const { DOOR_FLAG } = files; // a stand-in in checks
+const DOOR_CUT = path.join(path.dirname(DOOR_FLAG), 'windows-door-cut');
 const NAME = /^[A-Za-z0-9](?:[A-Za-z0-9 _-]*[A-Za-z0-9_-])?$/;
 
 async function run(command, args, timeout = 20000) {
@@ -72,10 +73,11 @@ function checkProject(name) {
 
 // Fails if Docker can't answer. "Couldn't check" must never be mistaken for "no rooms".
 async function rooms() {
-  const out = await run('docker', ['ps', '--filter', 'label=house.room', '--format', '{{.Label "house.room"}}|{{.Label "house.door"}}'], 8000);
+  const out = await run('docker', ['ps', '--no-trunc', '--filter', 'label=house.room', '--format', '{{.ID}}|{{.Label "house.room"}}|{{.Label "house.door"}}'], 8000);
+  const cut = (await readOr(DOOR_CUT, '')).split('\n'); // rooms the lock took /windows from
   return out.split('\n').filter(Boolean).map((line) => {
-    const [name, door] = line.split('|');
-    return { name, windowsDoor: door === 'open' };
+    const [id, name, door] = line.split('|');
+    return { name, windowsDoor: door === 'open' && !cut.includes(id) };
   });
 }
 
@@ -90,15 +92,18 @@ function isLowOnSpace(freeGb, totalGb) {
 }
 
 async function status() {
-  const [open, keeper, doorFlag, disk] = await Promise.all([
+  const [open, keeper, doorFlag, mounts, disk] = await Promise.all([
     rooms().catch(() => null),
     readOr('/run/house/status', 'House keeper isn\'t reporting.'),
     fs.access(DOOR_FLAG).then(() => true, () => false),
+    readOr('/proc/self/mountinfo', ''),
     fs.statfs('/'),
   ]);
   const freeGb = (disk.bavail * disk.bsize) / 2 ** 30;
-  // The lock only shows closed once no room can still read through the door.
-  const doorOpen = doorFlag || Boolean(open && open.some((room) => room.windowsDoor));
+  // The lock only shows closed once C: is let go and no room can still read through the door.
+  // A failed lock removes the flag first but leaves C: mounted, which still counts as open.
+  const driveMounted = mounts.split('\n').some((line) => line.split(' ')[4] === files.DOOR);
+  const doorOpen = doorFlag || driveMounted || Boolean(open && open.some((room) => room.windowsDoor));
   // windowsDrive: C: is there for the explorer to show (the house's own door, not a room's).
   return {
     rooms: open, dockerOk: open !== null, keeper, doorOpen, windowsDrive: doorFlag, freeGb, lowDisk: isLowOnSpace(freeGb, (disk.blocks * disk.bsize) / 2 ** 30),
@@ -152,12 +157,16 @@ async function openDoor() {
   await run('sudo', ['-n', '/usr/local/sbin/house-rules', 'door-open']);
 }
 
-// Stops new rooms getting the door first, then closes the rooms holding it, since they could
-// keep reading after it locks. If any can't be closed, this fails and the lock stays showing open.
+// Stops new rooms getting the door, takes /windows away from the rooms already holding it, then
+// lets go of C:. Never closes a room. If a room can't be cut (something in it has a file open in
+// /windows), this fails with that room's name and the lock stays showing open.
 async function closeDoor() {
-  await run('sudo', ['-n', '/usr/local/sbin/house-rules', 'door-close']);
-  const open = await rooms();
-  await Promise.all(open.filter((room) => room.windowsDoor).map((room) => closeRoom(room.name)));
+  try {
+    await run('sudo', ['-n', '/usr/local/sbin/house-rules', 'door-close']);
+  } catch (error) {
+    throw new Error(String(error.stderr || '').trim() || error.message);
+  }
+  // Checked here too, so an older installed house-rules that doesn't cut rooms can't pass as locked.
   const left = (await rooms()).filter((room) => room.windowsDoor);
   if (left.length) throw new Error(`These rooms could still read your Windows files: ${left.map((room) => room.name).join(', ')}`);
 }

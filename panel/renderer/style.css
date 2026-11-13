@@ -131,7 +131,7 @@ i[data-i] {
   gap: 8px;
   height: 31px;
   margin-bottom: 0;
-  padding: 0 8px 0 10px;
+  padding: 0 6px 0 8px;
   border-radius: 8px 8px 0 0;
   color: var(--text-chrome);
 }
@@ -1237,10 +1237,17 @@ html.gliding .snap-seam { display: none; }
 
 /* Fitting a smaller window. The widths are in the app's own units, so they follow the zoom.
    Things give up room in order: words on the right, then other words, then spacing. */
-.tabs { overflow: hidden; }
-.tab { min-width: 44px; overflow: hidden; container: tab / inline-size; }
+/* Like Chrome: as tabs crowd in they shrink to icon only. The open tab always keeps its icon and X.
+   Past that the strip scrolls (the open tab is kept in view) and + stays pinned at the right. */
+.tabs { gap: 2px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+.tabs.fade-l { mask-image: linear-gradient(to right, transparent, #000 22px); }
+.tabs.fade-r .new-tab::before { content: ''; position: absolute; top: 0; bottom: 0; right: 100%; width: 22px; background: linear-gradient(to right, transparent, var(--strip)); pointer-events: none; }
+.new-tab { position: sticky; right: 0; background: var(--strip); }
+.tab { min-width: 28px; overflow: hidden; container: tab / inline-size; }
+.tab.active { min-width: 68px; }
+.tab > :is(i, img, .tab-ai-dot) { flex: none; }
 @container tab (max-width: 130px) { .tab :is(.popout, .bring-back) { display: none; } }
-@container tab (max-width: 96px) { .tab:not(.active) .close-tab { display: none; } }
+@container tab (max-width: 96px) { .tab:not(.active) .close-tab, .tab .tab-ai-dot { display: none; } }
 @container tab (max-width: 70px) { .tab .tab-title { display: none; } }
 
 .address { overflow: hidden; } /* fitAddress in app.js handles a long path */
@@ -1671,7 +1678,7 @@ html.item-dragging, html.item-dragging * { cursor: default !important; }
   pointer-events: none;
   will-change: translate;
 }
-.tab-ghost.shown { opacity: 0.96; scale: 1; }
+.tab-ghost.shown { opacity: 1; scale: 1; }
 .tab-ghost.chip { width: 200px; height: 34px; }
 .tab-ghost.landing {
   opacity: 1;
@@ -1679,10 +1686,14 @@ html.item-dragging, html.item-dragging * { cursor: default !important; }
 }
 .tab-ghost.leaving { opacity: 0; scale: 0.94; }
 .tab-ghost.landing.leaving { scale: 1; }
-.tab-ghost-head { flex: none; display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 12px; background: var(--strip); }
+.tab-ghost-head { flex: none; display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 12px 0 10px; background: var(--bar); color: var(--text-chrome); border-radius: 8px 8px 0 0; }
 .tab-ghost-head span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .tab-ghost-head i[data-i] { flex: none; width: 16px; height: 16px; }
-.tab-ghost-body { flex: 1; min-height: 0; overflow: hidden; padding: 8px 10px; background: #fff; color: #1b1b1b; font: 11px/1.35 'Station Mono', Consolas, monospace; white-space: pre; }
+.tab-ghost-body { flex: 1; min-height: 0; display: grid; place-items: center; background: var(--bar) top / cover no-repeat; border-top: 1px solid var(--line-bar); }
+.tab-ghost-mark { width: 48px; height: 48px; opacity: 0.18; }
+.tab-ghost-mark[hidden] { display: none; }
+/* Just a tab (over any Station window): looks like the open tab, with a small shadow. */
+.tab-ghost.chip { border-radius: 8px 8px 0 0; box-shadow: 0 2px 8px #00000030; }
 /* A window carried by its only tab, over another window's tabs: it fades away so the gap opening
    there shows, and its tab's picture stays under the pointer (window-motion.js, app.js). */
 .app { transition: opacity 140ms ease-out; }
@@ -2104,13 +2115,31 @@ body.obscura-front .main { grid-template-rows: minmax(0, 1fr); }
 body.obscura-front .app { grid-template-rows: 40px minmax(0, 1fr); } /* the hidden bars' rows go too, or the page would slide up into one */
 @container (max-width: 760px) { .ob-outside span { display: none; } }
 .doc-area { position: relative; }
-.doc-area.split { flex-direction: row; }
-.snap-zones { position: absolute; inset: 0; z-index: 6; display: flex; pointer-events: none; }
-.snap-zones[hidden] { display: none; }
-.snap-zone { flex: 1; display: flex; align-items: center; justify-content: center; margin: 8px; border: 2px dashed transparent; border-radius: 10px; color: transparent; font-size: 15px; font-weight: 600; transition: background 0.12s, border-color 0.12s; }
-.snap-zone.on { border-color: var(--blue); background: rgba(0, 120, 212, 0.18); color: var(--text-chrome); }
-.doc-area.split > .doc-host:not([hidden]) { flex: 1 1 0; min-width: 0; }
-.doc-area.split > .doc-host:not([hidden]) + .doc-host:not([hidden]) { border-left: 2px solid var(--line-bar); }
+/* The drop zones sit in the page's cell of the grid, over whichever section shows. Off, they keep their
+   size (the tab drag and the divider measure them), so they are hidden by sight, not by [hidden]. */
+.main > .snap-zones { grid-column: 3; grid-row: 1; z-index: 6; display: flex; pointer-events: none; }
+.snap-zones.off { visibility: hidden; }
+.snap-zone { flex: 1; display: flex; align-items: center; justify-content: center; margin: 8px; border-radius: 10px; color: transparent; font-size: 15px; font-weight: 600; transition: background 0.12s; }
+.snap-zone.on { background: rgba(0, 120, 212, 0.26); box-shadow: inset 0 0 0 1px rgba(0, 120, 212, 0.45); color: var(--text-chrome); }
+
+/* Side by side (app.js layoutPair). --pair is the left half's share in percent. Two pages in the same
+   section share its row; a terminal beside a page splits the two sections instead (.pair-x). */
+.main.pair:not(.pair-x) > section:has(> .pair-l) { display: flex; flex-direction: row; }
+.main.pair:not(.pair-x) .pair-l { order: 0; flex: 0 0 calc(var(--pair) * 1%); min-width: 0; }
+.main.pair:not(.pair-x) .pair-r { order: 1; flex: 1 1 0; min-width: 0; }
+.main.pair-x > section.pair-l, .main.pair-x > section:has(> .pair-l) { justify-self: start; width: calc(var(--pair) * 1%); }
+.main.pair-x > section.pair-r, .main.pair-x > section:has(> .pair-r) { justify-self: end; width: calc((100 - var(--pair)) * 1%); }
+/* The divider: a grab area across the seam that takes no room, the line itself a 1px border. */
+.pair-grip { grid-column: 3; grid-row: 1; justify-self: start; z-index: 7; width: 7px; margin-left: calc(var(--pair) * 1% - 3px); cursor: col-resize; position: relative; }
+.pair-grip::after { content: ''; position: absolute; inset: 0 auto 0 3px; border-left: 1px solid var(--line-bar); }
+.pair-grip:hover::after, .pair-grip.held::after { border-left-color: var(--nav-grip); }
+.main:not(.pair) > .pair-grip { display: none; }
+.ob-bar .ob-btn.on { background: var(--strip-hover); }
+.tab.paired:not(.active) { background: var(--strip-hover); }
+/* Two Files halves: the one in front has a blue line along its top, and the other half's picks are gray. */
+.content.half-on { box-shadow: inset 0 2px 0 var(--blue); }
+.content.half-off :is(.row, .home-recent-row).selected::before, .content.half-off .tile.selected, .content.half-off .tile.selected:hover { background: var(--nav-selected); box-shadow: inset 0 0 0 1px var(--line); }
+.content.half-off .selected .check { border-color: var(--text-muted); background: var(--text-muted); }
 /* The page's zoom, where the project's name used to be. */
 .ob-zoom { flex: none; display: flex; align-items: center; height: 28px; border-radius: 14px; background: var(--field); border: 1px solid var(--line-bar); }
 .ob-zoom .tool { width: 28px; height: 26px; margin: 0; border-radius: 13px; }
@@ -2118,16 +2147,19 @@ body.obscura-front .app { grid-template-rows: 40px minmax(0, 1fr); } /* the hidd
 .ob-zoom-level { min-width: 48px; height: 26px; padding: 0 2px; border-radius: 13px; color: var(--text-chrome); font-size: 13px; font-variant-numeric: tabular-nums; }
 .ob-zoom-level:hover { background: var(--hover); }
 .ob-bar .tool.on { background: var(--view-on); color: var(--text-status); }
-/* An AI at work: a small banner over the top of the page, with a soft edge, only while it moves. */
-.ob-ai-banner { flex: none; display: flex; align-items: center; gap: 10px; height: 28px; padding: 0 8px 0 12px; background: #2b1f1a; color: #fff; font-size: 12.5px; border-bottom: 1px solid #d97757; }
+/* An AI at work: an orange glowing edge round the page and a pill at the top middle with Stop, only while it
+   moves. Drawn over the page, never in it. Only the pill takes clicks. The glow is one fixed shadow whose
+   opacity pulses (nothing that changes size: Station draws without the GPU). */
+.ob-ai-banner { position: absolute; top: 10px; left: 50%; translate: -50% 0; z-index: 5; display: flex; align-items: center; gap: 8px; max-width: calc(100% - 24px); height: 32px; padding: 0 5px 0 11px; border-radius: 16px; background: #2b1f1a; color: #fff; font-size: 12.5px; border: 1px solid #d97757; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35); white-space: nowrap; }
 .ob-ai-banner[hidden] { display: none; }
-.ob-ai-spacer { flex: 1; }
-.ob-ai-pulse { width: 8px; height: 8px; border-radius: 50%; background: #d97757; animation: ob-pulse 1.4s ease-in-out infinite; }
-.ob-ai-banner .ob-ai-stop { height: 20px; padding: 0 12px; border-radius: 10px; font-size: 12px; }
-@keyframes ob-pulse { 50% { opacity: 0.35; } }
-.ob-ai-glow { position: absolute; inset: 0; z-index: 2; pointer-events: none; box-shadow: inset 0 0 0 2px rgba(217, 119, 87, 0.85), inset 0 0 26px 4px rgba(217, 119, 87, 0.45); animation: ob-glow 2.4s ease-in-out infinite; }
+.ob-ai-banner-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ob-ai-sparkle { flex: none; width: 16px; height: 16px; color: #d97757; }
+.ob-ai-banner .ob-ai-stop { height: 24px; padding: 0 12px; border-radius: 12px; font-size: 12px; }
+.ob-ai-glow { position: absolute; inset: 0; z-index: 2; pointer-events: none; box-shadow: inset 0 0 0 3px rgba(217, 119, 87, 0.9), inset 0 0 34px 6px rgba(217, 119, 87, 0.4); animation: ob-glow 2.6s ease-in-out infinite; }
 .ob-ai-glow[hidden] { display: none; }
-@keyframes ob-glow { 50% { box-shadow: inset 0 0 0 2px rgba(217, 119, 87, 0.6), inset 0 0 40px 8px rgba(217, 119, 87, 0.3); } }
+@keyframes ob-glow { 50% { opacity: 0.45; } }
+@keyframes ob-pulse { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .ob-ai-glow { animation: none; } }
 .ob-ai-cursor { position: absolute; left: 0; top: 0; z-index: 4; width: 22px; height: 22px; pointer-events: none; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.4)); }
 .ob-ai-cursor[hidden] { display: none; }
 .ob-ai-name { position: absolute; left: 16px; top: 18px; padding: 1px 7px; border-radius: 8px; background: #d97757; color: #fff; font-size: 11px; font-weight: 600; white-space: nowrap; }
@@ -2234,3 +2266,12 @@ h1.docx-h { font-size: 26px; } h2.docx-h { font-size: 20px; } h3.docx-h { font-s
 .docx-table td { border: 1px solid #c8c8c8; padding: 4px 8px; vertical-align: top; min-width: 2em; }
 .docx-table .docx-p { margin: 0; }
 .docx-note { margin-top: 12px; color: #5c5c5c; font-size: 12px; }
+
+/* An AI's tab behind the owner's: its page stays drawn but unseen, so reading, clicking and
+   pictures work (a display:none page has no size). When no page tab is in front, the whole
+   page area is drawn instead, full size but see-through and under everything. */
+.ob-host.ai-live[hidden] { display: flex !important; position: absolute; inset: 0; opacity: 0; pointer-events: none; }
+.doc-area[hidden]:has(> .ai-live) { display: flex !important; position: fixed; inset: 0; z-index: -1; opacity: 0; pointer-events: none; }
+/* The dot on a tab while an AI is using it, in the AI orange, just before the move-to-window button. */
+.tab-ai-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: #d97757; animation: ob-pulse 1.4s ease-in-out infinite; }
+.tab-ai-dot[hidden] { display: none; }

@@ -97,12 +97,28 @@ module.exports = {
       console.log(`INFO tips on Home: ${homeAll} elements had hover text, now ${homeShown}`);
       const tiles = await page(`[...document.querySelectorAll('.home-tile')].map((t) => [t.querySelector('.home-tile-label').textContent, tipFor(t)])`);
       const input = tiles.find(([label]) => /Input/.test(label));
-      report(/All time/.test(input?.[1] || ''), `the Input Tokens tile keeps its All time line: ${JSON.stringify(input)}`);
+      report(input?.[1] === null, `a tile with text and a two-line tip shows none: ${JSON.stringify(input)}`);
       const streak = tiles.find(([label]) => /Streak/.test(label));
       report(streak?.[1] === null, `a tile with a one-line explanation shows none: ${JSON.stringify(streak)}`);
       console.log(`INFO shown on Home: ${JSON.stringify(await page(`[...document.querySelectorAll('[data-tip]')].filter((n) => n.getClientRects().length && tipFor(n)).map((n) => n.id || n.className || n.tagName)`))}`);
+      const cards = await page(`[...document.querySelectorAll('.home-card')].map((c) => [c.hasAttribute('title') || !!c.dataset.tip, c.querySelectorAll('[data-tip],[title]').length])`);
+      report(cards.length > 0 && cards.every(([own, inner]) => !own && inner === 0), `Home cards and their text carry no hover text: ${JSON.stringify(cards)}`);
       report(await page(`[...document.querySelectorAll('.home-section-title, .home-tile-label, .home-tile-note')].every((n) => !n.dataset.tip)`), 'headings and tile labels carry no hover text');
 
+      // A tab title with no tip of its own: nothing while it fits, its full text once it is cut off.
+      const tabTips = await page(`(() => {
+        const t = document.querySelector('.tab .tab-title'); const old = t.textContent;
+        const fit = cutOffAt(t); t.textContent = 'A very long tab title '.repeat(12).trim();
+        const cut = cutOffAt(t) === t && tipFor(t) === t.textContent; t.textContent = old; return [fit, cut]; })()`);
+      report(tabTips[0] === null && tabTips[1] === true, `a tab title shows its full text only when cut off: ${JSON.stringify(tabTips)}`);
+      // An icon-only tab (title hidden by the narrow form) shows its full title; a full-width tab shows nothing.
+      const narrow = await page(`(() => {
+        const tab = document.querySelector('.tab'); const t = tab.querySelector('.tab-title'); const old = t.textContent; const w = tab.style.width;
+        t.textContent = 'Notes App (2)'; const wide = [cutOffAt(tab), cutOffAt(t)];
+        tab.style.transition = 'none'; tab.style.width = '28px'; tab.style.flex = '0 0 28px';
+        const el = cutOffAt(tab); const tip = el ? tipFor(el) : null;
+        tab.style.width = w; tab.style.flex = ''; tab.style.transition = ''; t.textContent = old; return [wide, tip]; })()`);
+      report(narrow[0][0] === null && narrow[0][1] === null && narrow[1] === 'Notes App (2)', `an icon-only tab shows its full title, a full-width tab none: ${JSON.stringify(narrow)}`);
       await page(`(() => { houseTest.navigate(${JSON.stringify(folder)}); return true; })()`);
       await sleep(1500);
       await page(`(() => { const c = document.getElementById('view-details'); if (c) c.click(); return true; })()`);
@@ -112,6 +128,8 @@ module.exports = {
       const names = await page(`Object.fromEntries([...document.querySelectorAll('#rows .name-text')].map((n) => [n.textContent, tipFor(n)]))`);
       report(names['short.txt'] === null, `a file name that fits shows no hover text: ${JSON.stringify(names['short.txt'])}`);
       report(names[longName] === longName, `a cut-off file name shows its full name: ${JSON.stringify(names[longName])}`);
+      const textOnly = await page(`(() => { const b = document.getElementById('view-btn'); b.dataset.tip = 'Change view (Ctrl+V)\\nsecond line'; return [tipFor(b), tipFor(document.getElementById('cut'))]; })()`);
+      report(textOnly[0] === null && textOnly[1] === 'Cut (Ctrl+X)', `fitting text with a newline or shortcut tip shows none; an icon button keeps its shortcut: ${JSON.stringify(textOnly)}`);
       const back = await page(`tipFor(document.getElementById('back'))`);
       report(back === 'Back', `an icon-only toolbar button keeps its hover text: ${JSON.stringify(back)}`);
       const labeled = await page(`[tipFor(document.getElementById('view-btn')), document.getElementById('view-btn').getAttribute('aria-label')]`);

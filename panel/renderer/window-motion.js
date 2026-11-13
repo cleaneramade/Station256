@@ -472,6 +472,18 @@
     offerWindows(target.zones, target.zone);
   }
 
+  // "Arrange Windows Side by Side" (a tab's right-click menu): the windows share the screen using
+  // only the layouts above. Four or more take quarters, three the half and two quarters, two halves;
+  // a layout that doesn't fit this screen gives way to the next, and windows past the last spot share one.
+  function arrange(index, count) {
+    const zones = [QUARTERS, SNAP_LAYOUTS[2], HALVES].find((layout) => layout.length <= count && fits(layout)) || HALVES;
+    const zone = zones[index % zones.length];
+    placeIn({ zone, zones: [zone] }); // no other apps are offered for the empty spots
+  }
+  window.house.on('window:arrange', ({ index, count } = {}) => {
+    if (Number.isInteger(index) && Number.isInteger(count) && count > 1) arrange(index, count);
+  });
+
   /* The panel that opens when you rest on the maximize button, as in Windows 11. */
   const maximizeButton = document.getElementById('win-max');
 

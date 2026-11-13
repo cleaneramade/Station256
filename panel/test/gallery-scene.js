@@ -230,7 +230,7 @@ module.exports = {
 
     await page(`(() => { houseTest.openInObscura('${base}/portfolio'); return true; })()`);
     await sleep(2500);
-    await page(`(() => { const tabs = houseTest.state.tabs.filter((x) => x.kind === 'obscura'); const a = tabs.find((x) => x.url.endsWith('/portfolio')); const b = tabs.find((x) => x.url.endsWith('/forecast')); houseTest.mergeObscuraTabs(a, b, 'right'); return true; })()`);
+    await page(`(() => { const tabs = houseTest.state.tabs.filter((x) => x.kind === 'obscura'); const a = tabs.find((x) => x.url.endsWith('/portfolio')); const b = tabs.find((x) => x.url.endsWith('/forecast')); houseTest.pairTabs(a, b, 'right'); return true; })()`);
     await sleep(1500);
     await shot('14-browser-split');
 

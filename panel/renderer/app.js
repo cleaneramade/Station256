@@ -63,7 +63,7 @@ let copyJob = null; // a copy, move or delete running right now, and the pages i
 let renaming = null; // a name being typed in place
 // Choices that are remembered: from the View menu, and whether the System panel's Activity list
 // is open, with the newest problem in it that was seen.
-const prefs = { checks: true, activityOpen: false, activitySeen: '' };
+const prefs = { checks: true, activityOpen: false, activitySeen: '', darkSites: false, folderViews: {} };
 
 /* ---------- Small dialogs ---------- */
 
@@ -431,8 +431,40 @@ function formatSize(bytes) {
 const tabsEl = $('tabs');
 const newTabButton = $('new-tab');
 const termArea = $('term-area');
-const filesView = $('files-view');
 const tabTemplate = $('tab-template');
+
+/* Two Files tabs can sit side by side, so the Files section exists twice: the one in the page, and a
+   copy made the first time two Files tabs pair. One of them is "bound": filesView, rowsEl, columnsEl,
+   homeView and columnDrop are its, the ids (rows, columns...) are on it, and the entries, selection,
+   focus and search in `state` are its. So all the code written for one Files view works on the half in
+   front, as before. bindView() switches. Pressing in a half makes it the front tab (see pairTabs). */
+let filesView = $('files-view');
+const views = [];
+let bound = null;
+const viewListeners = []; // what this file puts on the Files section while it starts, so the copy gets the same
+const addNative = EventTarget.prototype.addEventListener;
+EventTarget.prototype.addEventListener = function recordView(...args) {
+  if (this instanceof Element && filesView.contains(this)) viewListeners.push([this, args]);
+  return addNative.apply(this, args);
+};
+const viewOf = (tab) => tab.view || views[0];
+const keepOf = (view) => (view === bound ? state : view.keep); // where a view's entries and selection are
+function bindView(view) {
+  if (view === bound) return;
+  Object.assign(bound.keep, { entries: state.entries, selected: state.selected, anchor: state.anchor, focus: state.focus, search: state.search, viewMode: state.viewMode, sortBy: state.sortBy, sortAsc: state.sortAsc });
+  Object.assign(state, view.keep);
+  bound = view;
+  ({ root: filesView, rows: rowsEl, columns: columnsEl, home: homeView, drop: columnDrop } = view);
+  views.forEach((one) => Object.entries(one.ids).forEach(([id, node]) => { node.id = one === view ? id : `${id}-b`; }));
+  view.root.append(dropShade);
+  if ($('search').value !== state.search) $('search').value = state.search;
+}
+// Runs something on one view, then puts the bound one back.
+function withView(view, run) {
+  const was = bound;
+  bindView(view);
+  try { return run(); } finally { bindView(was); }
+}
 
 // How many Station 256 windows are open, and whether this is the main one (main.js keeps it up to
 // date). Any tab can have a window of its own, and tabs move between windows, as in Chrome.
@@ -446,7 +478,8 @@ window.house.on('windows:changed', ({ count, main } = {}) => {
 // A terminal that has ended can't be shown anywhere else. Any other tab can move.
 // A video being saved stays put until it's done (video-tab.js).
 let tabDragging = false;
-const canMove = (tab) => !(tab.kind === 'term' && tab.ended) && !(tab.kind === 'video' && tab.job);
+// An AI's tab stays where it is: the AI's requests only reach the window that made it (main.js).
+const canMove = (tab) => !(tab.kind === 'term' && tab.ended) && !(tab.kind === 'video' && tab.job) && !tab.aiOf;
 
 function renderTabButtons() {
   const onlyTab = state.tabs.length === 1;
@@ -538,6 +571,9 @@ const tabGhostHead = el('div', 'tab-ghost-head');
 const tabGhostIcon = icon('window_console');
 tabGhostHead.append(tabGhostIcon, tabGhostTitle);
 const tabGhostBody = el('div', 'tab-ghost-body');
+const tabGhostMark = icon('window_console'); // stands in for the page's picture when there is none
+tabGhostMark.classList.add('tab-ghost-mark');
+tabGhostBody.append(tabGhostMark);
 tabGhost.append(tabGhostHead, tabGhostBody);
 tabGhost.hidden = true;
 document.body.append(tabGhost);
@@ -576,22 +612,28 @@ function showTabGhost(tab, { at = null, chip = false } = {}) {
   tabGhost.style.height = '';
   if (at) placeGhostNow(at.x, at.y);
   tabGhostTitle.textContent = tab.el.querySelector('.tab-title').textContent;
-  setIcon(tabGhostIcon, (tab.kind === 'files' && tab.placeIcon) || GHOST_ICONS[tab.kind] || 'window_console');
-  // A peek at what's in it: a terminal's last few lines, or the first few things in a folder.
-  const lines = [];
-  const buffer = tab.live?.term?.buffer?.active;
-  if (buffer) {
-    for (let row = buffer.baseY + buffer.cursorY; row >= 0 && lines.length < 9; row--) {
-      const text = buffer.getLine(row)?.translateToString(true) || '';
-      if (text.trim() || lines.length) lines.unshift(text);
-    }
-  } else if (tab.kind === 'files' && state.active === tab) {
-    visibleEntries().slice(0, 9).forEach((entry) => lines.push(entry.name));
-  }
-  tabGhostBody.textContent = lines.join('\n');
+  const picture = (tab.kind === 'files' && tab.placeIcon) || GHOST_ICONS[tab.kind] || 'window_console';
+  setIcon(tabGhostIcon, picture);
+  setIcon(tabGhostMark, picture);
+  tabGhostBody.style.backgroundImage = '';
+  tabGhostMark.hidden = false;
   tabGhost.hidden = false;
   void tabGhost.offsetWidth; // its starting shape, so a change straight after glides from it
   requestAnimationFrame(() => tabGhost.classList.add('shown'));
+}
+
+// A real picture of the page, once it has come (see snapshotPage): the card shows it instead of the faint icon.
+function setGhostPicture(url, run) {
+  if (!url || run !== ghostRun) return;
+  tabGhostBody.style.backgroundImage = `url(${url})`;
+  tabGhostMark.hidden = true;
+}
+
+// A picture of the page as it is now, for the card that grows into a new window. Null if it can't
+// be had quickly (main.js gives up after 50 ms), and the card then shows the faint icon.
+function snapshotPage() {
+  const box = snapZones.getBoundingClientRect();
+  return call('tabSnapshot', { x: box.left, y: box.top, w: box.width, h: box.height }).catch(() => null);
 }
 
 function moveTabGhost(x, y) {
@@ -633,7 +675,7 @@ window.house.on('tab:landed', () => {
 // Asks which other window's tabs the pointer is over, opening a gap there. One question at a time,
 // and once more when it's answered if the pointer moved meanwhile. still(): whether the carry is
 // still going, so nothing is asked once it has ended.
-function asksOver(still, answer) {
+function asksOver(still, answer, kind) {
   let asking = false;
   let again = false;
   const ask = () => {
@@ -643,8 +685,8 @@ function asksOver(still, answer) {
     }
     asking = true;
     again = false;
-    call('tabHover', true)
-      .then((over) => { if (still()) answer(Boolean(over)); }, () => {})
+    call('tabHover', true, kind)
+      .then((over) => { if (still()) answer(over || false); }, () => {})
       .finally(() => {
         asking = false;
         if (again && still()) ask();
@@ -721,9 +763,19 @@ function addTabElement(tab, title) {
         '-',
       );
     }
+    // Beside the tab in front, or back to two tabs.
+    if (tab.splitWith) items.push({ label: 'Separate', icon: 'panel_right_contract', run: () => separateTabs(tab) }, '-');
+    else if (canPair(tab, state.active)) {
+      items.push(
+        { label: 'Show on the Left', icon: 'panel_left_contract', run: () => pairTabs(tab, state.active, 'left') },
+        { label: 'Show on the Right', icon: 'panel_right', run: () => pairTabs(tab, state.active, 'right') },
+        '-',
+      );
+    }
     items.push(
       { label: 'New Tab', icon: 'tab_add', run: () => openFilesTab(HOME_PAGE) },
       { label: 'Move to New Window', icon: 'window_new', disabled: state.tabs.length < 2 || !canMove(tab), run: () => popOutTab(tab) },
+      ...(windowInfo.count > 1 ? [{ label: 'Arrange Windows Side by Side', icon: 'window_new', run: () => call('arrangeWindows').catch(() => {}) }] : []),
       { label: 'Close Tab', icon: 'dismiss', run: () => closeTab(tab) },
       ...(isRoomTerminal(tab) && roomIsUp(tab.room) ? [{ label: 'Close Room', icon: 'checkbox_unchecked', tint: 'tint-red', run: () => closeOneRoom(tab) }] : []),
     );
@@ -753,44 +805,55 @@ function addTabElement(tab, title) {
     const grabX = event.clientX - node.getBoundingClientRect().left;
     const canLift = () => state.tabs.length > 1 && canMove(tab);
     let lifted = false;
-    // Over another window's tabs, a gap opens there, and the carried picture shrinks to a tab.
-    const hoverOthers = asksOver(() => lifted, (over) => tabGhost.classList.toggle('chip', over));
+    // Over any Station window the carried picture is only a tab, so the page under it stays in
+    // view; outside them all it grows into the new window's shape. Over another window's tabs a gap opens too.
+    let overOther = false; // 'tabs', 'page' or false
+    const insideOwn = (point) => {
+      const app = document.querySelector('.app').getBoundingClientRect();
+      return point.clientX >= app.left && point.clientX <= app.right && point.clientY >= app.top && point.clientY <= app.bottom;
+    };
+    const hoverOthers = asksOver(() => lifted, (over) => { overOther = over; }, tab.kind);
+    let picture = null;
     const offStrip = (point) => {
       const box = tabsEl.getBoundingClientRect();
       const reach = lifted ? 12 : 36; // harder to pull off than to drop back, so it doesn't flicker
       return point.clientY < box.top - reach || point.clientY > box.bottom + reach;
     };
-    // A browser tab carried over another browser's page can join it side by side (split view).
-    let mergeTarget = null;
+    // Carried over the page, it can join the tab that was in front when it was picked up, side by
+    // side. That tab is put back in front once the carried one lifts (begin() brought this one up).
+    // If the carried tab was itself in front, the tab used before it is the one (as in a browser,
+    // where it leaves and the last one shows). Chosen once per lift, so it never changes mid-drag.
+    const frontBefore = state.active;
+    let anchor = null;
+    const pickPartner = () => {
+      const one = frontBefore !== tab ? frontBefore : state.tabs.filter((other) => canPair(tab, other)).sort((x, y) => y.usedAt - x.usedAt)[0];
+      return canPair(tab, one) ? one : null;
+    };
+    const partner = () => (anchor && state.tabs.includes(anchor) && canPair(tab, anchor) ? anchor : null);
     let mergeSide = null;
     const mergeHover = (point) => {
-      if (tab.kind !== 'obscura' || tab.splitWith) return;
-      if (!mergeTarget) {
-        mergeTarget = state.tabs.filter((other) => other !== tab && other.kind === 'obscura' && !other.splitWith && !other.closed).sort((x, y) => y.usedAt - x.usedAt)[0] || null;
-        if (mergeTarget) activateTab(mergeTarget); // its page shows under the carried tab
-      }
-      if (!mergeTarget) return;
-      const box = $('doc-area').getBoundingClientRect();
-      const over = point.clientX >= box.left && point.clientX <= box.right && point.clientY >= box.top && point.clientY <= box.bottom;
-      mergeSide = over ? (point.clientX < box.left + box.width / 2 ? 'left' : 'right') : null;
+      mergeSide = partner() && overOther !== 'tabs' ? halfAt(point.clientX, point.clientY) : null;
       showSnapZones(mergeSide);
-    };
-    const mergeEnd = (keep) => {
-      if (!mergeTarget) return;
-      showSnapZones(null);
-      if (!keep) activateTab(tab);
-      mergeTarget = null;
-      mergeSide = null;
     };
     const lift = (on) => {
       if (on === lifted) return;
-      if (!on) mergeEnd(false);
+      if (!on) {
+        mergeSide = null;
+        showSnapZones(null);
+      }
+      const mate = on ? pickPartner() : partner();
+      if (on) anchor = mate;
+      if (mate) activateTab(on ? mate : tab);
+      if (!on) anchor = null;
       lifted = on;
       node.classList.toggle('tab-lifted', on);
       node.style.transform = '';
       if (on) {
-        showTabGhost(tab);
+        const run = ghostRun + 1; // showTabGhost makes this its number
+        showTabGhost(tab, { chip: true });
+        picture?.then((url) => setGhostPicture(url, run));
       } else {
+        overOther = false;
         hideTabGhost();
         call('tabHover', false).catch(() => {});
       }
@@ -799,6 +862,7 @@ function addTabElement(tab, title) {
       begin() {
         tabDragging = true; // a browser page must not take the keyboard focus (and the pointer) mid-drag
         activateTab(tab);
+        if (canLift()) picture = snapshotPage(); // before it lifts and another page shows
         node.classList.add('tab-moving');
         // It may be carried off to a window of its own: one gets ready out of sight meanwhile.
         if (canLift()) call('tabWarm').catch(() => {});
@@ -807,6 +871,7 @@ function addTabElement(tab, title) {
         lift(canLift() && offStrip(current));
         if (lifted) {
           moveTabGhost(current.clientX, current.clientY);
+          tabGhost.classList.toggle('chip', overOther || insideOwn(current));
           hoverOthers();
           mergeHover(current);
         } else {
@@ -824,17 +889,19 @@ function addTabElement(tab, title) {
         node.style.transform = '';
         if (!moved) return;
         sortTabs();
-        if (letGo && mergeTarget && mergeSide) {
-          // Let go on a browser page: the two join, nothing moves to another window.
-          const [target, side] = [mergeTarget, mergeSide];
-          mergeEnd(true);
+        const mate = partner();
+        if (letGo && mergeSide && mate) {
+          // Let go on a page: the two join, nothing moves to another window.
+          const side = mergeSide;
+          mergeSide = null;
+          showSnapZones(null);
           node.classList.remove('tab-lifted');
           hideTabGhost();
           call('tabHover', false).catch(() => {});
-          mergeObscuraTabs(tab, target, side);
+          pairTabs(tab, mate, side);
           return;
         }
-        if (letGo) mergeEnd(false);
+        if (letGo) showSnapZones(null);
         if (letGo && !await dropTab(tab)) {
           node.classList.remove('tab-lifted');
           hideTabGhost();
@@ -847,16 +914,118 @@ function addTabElement(tab, title) {
   tabsEl.insertBefore(node, newTabButton);
 }
 
-// The two halves a browser tab can be dropped on, shown over the page while it is carried.
-const snapZones = el('div', 'snap-zones');
-snapZones.hidden = true;
+// The two halves a tab can be dropped on, shown over the page while it is carried. It sits in the
+// page's own cell of the grid, so it is there whichever section is showing.
+const mainEl = document.querySelector('.main');
+const snapZones = el('div', 'snap-zones off');
 snapZones.append(el('div', 'snap-zone left', 'Open on the left'), el('div', 'snap-zone right', 'Open on the right'));
-$('doc-area').append(snapZones);
+mainEl.append(snapZones);
+// Which half of the page a point is over, or null.
+function halfAt(x, y) {
+  const box = snapZones.getBoundingClientRect();
+  if (x < box.left || x > box.right || y < box.top || y > box.bottom) return null;
+  return x < box.left + box.width / 2 ? 'left' : 'right';
+}
+// Another window's tab carried over this page (main.js tabHover): the half it would take shows,
+// and main is told which, so a drop there pairs it with the tab in front.
+window.house.on('tab:half', (point) => {
+  const side = point && canPair({ kind: point.kind }, state.active) ? halfAt(point.x, point.y) : null;
+  showSnapZones(side);
+  call('tabHalfIs', side).catch(() => {});
+});
 function showSnapZones(side) {
-  snapZones.hidden = !side;
+  snapZones.classList.toggle('off', !side);
   snapZones.firstChild.classList.toggle('on', side === 'left');
   snapZones.lastChild.classList.toggle('on', side === 'right');
 }
+
+// Side by side: two tabs that have a page of their own share the tab area, a terminal beside a
+// browser being the main use. Both stay on the strip; the one clicked is in front (state.active)
+// and its mate shows beside it. Two Files tabs each get one of the two Files sections (bindView). Agents, Rules and the video editor stay out. style.css: .main.pair, with --pair the left half's share in percent.
+const PAIRABLE = new Set(['term', 'obscura', 'doc', 'video', 'song', 'files']);
+const PAIR_MIN_PX = 240; // the narrowest a half can be dragged to
+const canPair = (a, b) => Boolean(a && b) && a !== b && PAIRABLE.has(a.kind) && PAIRABLE.has(b.kind) && !a.splitWith && !b.splitWith && !a.closed && !b.closed;
+
+// side: where `dragged` goes, 'left' or 'right' of `target`.
+function pairTabs(dragged, target, side, at = 50) {
+  if (!canPair(dragged, target)) return false;
+  if (dragged.kind === 'files' && target.kind === 'files' && viewOf(dragged) === viewOf(target)) dragged.view = otherView(viewOf(target));
+  dragged.splitWith = target;
+  target.splitWith = dragged;
+  dragged.side = side === 'left' ? 'left' : 'right';
+  target.side = dragged.side === 'left' ? 'right' : 'left';
+  dragged.pairAt = target.pairAt = Number.isFinite(at) ? Math.min(80, Math.max(20, at)) : 50;
+  for (const one of [dragged, target]) {
+    if (one.unsplit) one.unsplit.hidden = false;
+    if (one.pairWired || one.kind === 'files') continue; // a Files half is wired with its section (makeView)
+    one.pairWired = true;
+    // A click or the keyboard going into a half makes it the tab in front (focus doesn't bubble, so capture).
+    // Not while an AI is at work in it (its banner is up): its clicks must never pull the front tab
+    // over, nor the keyboard (a click in its page takes focus), so a terminal in front gets it back.
+    for (const name of ['pointerdown', 'focus']) pageOf(one).addEventListener(name, () => halfEntered(one), true);
+  }
+  activateTab(dragged);
+  return true;
+}
+
+function halfEntered(one) {
+  if (!one.splitWith || state.active !== one.splitWith || tabDragging) return; // only from its mate in front
+  if (!(one.aiOf && !one.aiBanner.hidden)) activateTab(one);
+  else if (state.active.kind === 'term') state.active.live.term.focus();
+}
+
+// Leaves both as ordinary tabs; the caller shows them again.
+function unpair(tab) {
+  const mate = tab.splitWith;
+  if (!mate) return;
+  for (const one of [tab, mate]) {
+    one.splitWith = null;
+    one.side = null;
+    if (one.unsplit) one.unsplit.hidden = true;
+  }
+}
+function separateTabs(tab) {
+  const front = state.active;
+  const shownNow = front === tab || front === tab.splitWith;
+  unpair(tab);
+  if (shownNow) activateTab(front);
+}
+
+// The element a tab's page is: its own host, or the shared Files section.
+const pageOf = (tab) => tab.host || (tab.kind === 'files' ? viewOf(tab).root : null);
+
+// Which pages sit where: classes on the main area (style.css does the sizing).
+function layoutPair(front, mate) {
+  const [left, right] = !mate ? [] : front.side === 'left' ? [front, mate] : [mate, front];
+  state.tabs.forEach((one) => pageOf(one)?.classList.remove('pair-l', 'pair-r')); // first off, as Files tabs can share a section
+  if (left) pageOf(left).classList.add('pair-l');
+  if (right) pageOf(right).classList.add('pair-r');
+  mainEl.classList.toggle('pair', Boolean(mate));
+  mainEl.classList.toggle('pair-x', Boolean(mate) && (pageOf(front).parentNode !== pageOf(mate).parentNode || pageOf(front).parentNode === mainEl)); // two sections, not one
+  mainEl.style.setProperty('--pair', front.pairAt ?? 50);
+}
+
+// The divider between the halves, dragged like the sidebar's grip. Double-click: half and half.
+const pairGrip = el('div', 'pair-grip');
+mainEl.append(pairGrip);
+function movePair(at) {
+  const tab = state.active;
+  if (!tab?.splitWith) return;
+  tab.pairAt = tab.splitWith.pairAt = at;
+  mainEl.style.setProperty('--pair', at);
+}
+pairGrip.addEventListener('mousedown', (event) => event.preventDefault()); // a terminal keeps the keyboard
+pairGrip.addEventListener('dblclick', () => movePair(50));
+pairGrip.addEventListener('pointerdown', (event) => {
+  if (event.button !== 0) return;
+  const cell = snapZones.getBoundingClientRect(); // the page's cell, whichever section shows
+  const least = Math.min(45, (PAIR_MIN_PX / cell.width) * 100);
+  pairGrip.classList.add('held');
+  window.houseFrame.track(pairGrip, event, {
+    move: (current) => movePair(Math.min(100 - least, Math.max(least, ((current.clientX - cell.left) / cell.width) * 100))),
+    end: () => pairGrip.classList.remove('held'),
+  });
+});
 
 // The tabs in the order they sit on the strip.
 function sortTabs() {
@@ -868,7 +1037,7 @@ function sortTabs() {
 // gap can be seen. Let go there, the tab joins them and this window closes.
 let joinable = false;
 let barCarry = false;
-const barHover = asksOver(() => barCarry, (over) => { joinable = over; });
+const barHover = asksOver(() => barCarry, (over) => { joinable = over === 'tabs'; });
 window.houseFrame.barDrag = {
   move(current) {
     const [only] = state.tabs;
@@ -901,31 +1070,65 @@ window.houseFrame.barDrag = {
   },
 };
 
+// A strip with more tabs than fit scrolls: a soft fade on the edge that is cut, so no tab shows
+// sliced, and the wheel scrolls it sideways.
+const fadeStrip = () => {
+  tabsEl.classList.toggle('fade-l', tabsEl.scrollLeft > 1);
+  tabsEl.classList.toggle('fade-r', tabsEl.scrollLeft + tabsEl.clientWidth < tabsEl.scrollWidth - 1);
+};
+tabsEl.addEventListener('scroll', fadeStrip, { passive: true });
+tabsEl.addEventListener('wheel', (event) => {
+  if (tabsEl.scrollWidth <= tabsEl.clientWidth || Math.abs(event.deltaY) < Math.abs(event.deltaX)) return;
+  tabsEl.scrollLeft += event.deltaY;
+  event.preventDefault();
+}, { passive: false });
+new ResizeObserver(fadeStrip).observe(tabsEl);
+new MutationObserver(fadeStrip).observe(tabsEl, { childList: true });
+
 function activateTab(tab) {
-  if (tab.mergedInto && state.tabs.includes(tab.mergedInto)) tab = tab.mergedInto; // a split view's tab is the one on the strip
   if (!preview.hidden) closePreview();
+  const before = state.active;
   state.active = tab;
   tab.usedAt = Date.now();
+  const mate = state.tabs.includes(tab.splitWith) ? tab.splitWith : null; // a pair shows both halves
+  const shown = mate ? [tab, mate] : [tab];
   state.tabs.forEach((other) => {
     other.el.classList.toggle('active', other === tab);
-    if (other.host) other.host.hidden = other !== tab && other !== tab.splitWith; // a split view shows both halves
+    other.el.classList.toggle('paired', other === mate);
+    if (other.host) other.host.hidden = !shown.includes(other);
+    if (other.host) other.host.inert = other.host.hidden; // so a tab drawn out of sight (an AI's) can't take the keyboard
   });
-  $('doc-area').classList.toggle('split', Boolean(tab.splitWith));
+  layoutPair(tab, mate);
+  tab.el.scrollIntoView({ inline: 'nearest', block: 'nearest' }); // the open tab stays in view when the strip scrolls
   const isFiles = tab.kind === 'files';
-  filesView.hidden = !isFiles;
-  termArea.hidden = tab.kind !== 'term';
+  const filesHalves = shown.filter((one) => one.kind === 'files');
+  filesHalves.forEach((one) => { one.view = viewOf(one); });
+  views.forEach((view) => {
+    view.root.hidden = !filesHalves.some((one) => viewOf(one) === view);
+    // Two Files halves: the one in front has a blue line along its top, the other's picks are gray.
+    view.root.classList.toggle('half-on', filesHalves.length === 2 && viewOf(isFiles ? tab : mate) === view);
+    view.root.classList.toggle('half-off', filesHalves.length === 2 && viewOf(isFiles ? tab : mate) !== view);
+  });
+  const filesTab = isFiles ? tab : mate?.kind === 'files' ? mate : null;
+  if (filesTab) bindView(viewOf(filesTab));
+  termArea.hidden = !shown.some((one) => one.kind === 'term');
   agentsView.hidden = tab.kind !== 'agents';
   rulesView.hidden = tab.kind !== 'rules';
   $('llama-view').hidden = tab.kind !== 'llama';
   window.schedulesPage?.show(tab); // renderer/schedules-tab.js
   // Files opened in a page (doc-tab.js, video-tab.js), and the video editor (editor-tab.js).
-  $('doc-area').hidden = tab.kind !== 'doc' && tab.kind !== 'video' && tab.kind !== 'song' && tab.kind !== 'editor' && tab.kind !== 'obscura';
+  $('doc-area').hidden = !shown.some((one) => one.host && one.kind !== 'term');
   document.body.classList.toggle('term-active', !isFiles);
-  document.body.classList.toggle('obscura-front', tab.kind === 'obscura' || tab.kind === 'editor'); // the page gets the whole tab area (style.css); the video editor needs the room too
+  // The page gets the whole tab area (style.css); the video editor needs the room too. A terminal beside it keeps the sidebar.
+  document.body.classList.toggle('obscura-front', shown.every((one) => one.kind === 'obscura' || one.kind === 'editor'));
   if (typeof showZoomLabel === 'function') showZoomLabel();
   call('obscuraFront', tab.kind === 'obscura').catch(() => {}); // and Ctrl + / Ctrl - zoom the page, not Station (main.js)
+  // A Files half not drawn yet (after a reload), or whose section showed another tab.
+  if (mate?.kind === 'files' && (!mate.listed || viewOf(mate).tab !== mate)) loadFolder(mate, true);
   if (isFiles) {
-    loadFolder();
+    // Going from one Files half to the other leaves both drawn as they are, so a click on a file still lands.
+    if (before === mate && mate?.kind === 'files' && viewOf(tab).tab === tab) renderChrome();
+    else loadFolder(tab, true);
   } else if (tab.kind === 'agents') {
     renderAgents();
   } else if (tab.kind === 'rules') {
@@ -949,8 +1152,9 @@ function activateTab(tab) {
     tab.live.refit();
     tab.live.term.focus();
   }
-  // So a notification isn't sent about the terminal you're looking at.
-  call('termShown', tab.kind === 'term' ? tab.termId : null).catch(() => {});
+  if (mate?.kind === 'term') mate.live.refit();
+  // So a notification isn't sent about the terminal you're looking at (one beside the front tab counts).
+  call('termShown', shown.find((one) => one.kind === 'term')?.termId ?? null).catch(() => {});
   watchAgents();
   // Right away, even if a folder is slow to load, so the room button can't still mean the last tab's room.
   renderChrome();
@@ -1081,6 +1285,8 @@ function removeTab(tab) {
     call('windowEmpty').then((closed) => { if (!closed) removeTab(tab); }, () => removeTab(tab));
     return;
   }
+  const mate = tab.splitWith;
+  unpair(tab); // the half that stays is a tab of its own
   state.tabs.splice(index, 1);
   if (tab.kind === 'term') {
     tab.live.dispose();
@@ -1092,9 +1298,10 @@ function removeTab(tab) {
   if (tab.kind === 'editor') closeEditor(tab);
   if (tab.kind === 'obscura') closeObscura(tab);
   tab.el.remove();
-  const back = state.tabs.includes(tab.returnTo) ? tab.returnTo : state.tabs[Math.max(0, index - 1)];
+  const back = state.tabs.includes(mate) ? mate : state.tabs.includes(tab.returnTo) ? tab.returnTo : state.tabs[Math.max(0, index - 1)];
   if (!state.tabs.length) openFilesTab(HOME_PAGE);
   else if (state.active === tab) activateTab(back);
+  else if (state.active === mate) activateTab(mate); // shown alone now
   renderTabButtons();
   watchAgents();
 }
@@ -1111,6 +1318,13 @@ function describeTab(tab) {
   if (tab.kind === 'obscura') return obscuraDescription(tab);
   return { kind: tab.kind };
 }
+
+// All the tabs, for a page about to start again (Ctrl+R, a new version): which ones are a pair
+// goes with them, so they find each other again (start, below).
+const describeAll = () => state.tabs.map((tab) => ({
+  ...describeTab(tab),
+  pair: tab.splitWith ? { id: state.tabs.indexOf(tab.side === 'left' ? tab : tab.splitWith), side: tab.side, at: tab.pairAt } : null,
+}));
 
 // The tab's "own window" button. Only when another tab is left behind. Its picture lifts off the
 // tab and grows into the new window, which then fades in over it.
@@ -1199,7 +1413,18 @@ async function addMovedTab(incoming) {
   if (kind === 'video' && typeof incoming.path === 'string') return openVideo(incoming.path, incoming.edits);
   if (kind === 'song' && typeof incoming.path === 'string') return openSong(incoming.path);
   if (kind === 'editor' && typeof incoming.url === 'string') return openEditorAt(incoming.url);
-  if (kind === 'obscura') return openObscura(/^https?:\/\//i.test(incoming.url) ? incoming.url : null);
+  if (kind === 'obscura') {
+    const url = /^https?:\/\//i.test(incoming.url) ? incoming.url : null;
+    if (!incoming.ai) return openObscura(url);
+    // An AI's page coming back after a reload: behind, as it was made, and still its AI's.
+    // Blank at first, and its address kept: the page loads once main knows this tab is the AI's
+    // (the address wall only covers a tab it knows), when the AI next asks (obscura-tab.js).
+    const tab = openObscura(null, true);
+    markAiTab(tab, incoming.ai.project, incoming.ai.session);
+    tab.url = url || '';
+    tab.aiResume = url;
+    return tab;
+  }
   if (kind === 'term') {
     const session = await attempt(() => call('termAttach', incoming.termId));
     return session ? adoptTerminal({ id: incoming.termId, title: session.title, room: session.room, tab: session.tab }, session.buffer) : null;
@@ -1209,9 +1434,12 @@ async function addMovedTab(incoming) {
 
 // A tab coming from another window. Carried onto these tabs, it lands in the gap that opened for
 // it, and the tabs beside it glide to their new places rather than jump.
-window.house.on('tab:arrive', async ({ tab: incoming } = {}) => {
+window.house.on('tab:arrive', async ({ tab: incoming, side } = {}) => {
   const landing = tabSlot.isConnected ? tabSlot.nextElementSibling : null;
+  const front = state.active;
+  showSnapZones(null);
   const tab = await addMovedTab(incoming);
+  if (tab && (side === 'left' || side === 'right')) pairTabs(tab, front, side); // dropped on a half of the page
   const was = [...tabsEl.querySelectorAll('.tab')].filter((other) => other !== tab?.el).map((other) => [other, other.getBoundingClientRect().left]);
   if (tab && landing && landing !== tab.el && landing.isConnected) {
     tabsEl.insertBefore(tab.el, landing);
@@ -1244,7 +1472,7 @@ newTabButton.addEventListener('contextmenu', (event) => {
 
 /* ---------- Explorer ---------- */
 
-const rowsEl = $('rows');
+let rowsEl = $('rows');
 
 const nameOrder = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
@@ -1691,7 +1919,7 @@ function setEnabled(id, enabled) {
 
 function renderChrome() {
   const tab = state.active;
-  if (!tab) return;
+  if (!tab || (tab.kind === 'files' && viewOf(tab) !== bound)) return; // the other half being drawn: the toolbar is the front one's
   // Home has no list, so what works on a list (sorting, views, search, paste) is off there.
   const home = tab.kind === 'files' && tab.path === HOME_PAGE;
   const isFiles = tab.kind === 'files' && !home;
@@ -1707,10 +1935,7 @@ function renderChrome() {
   setEnabled('refresh', isFiles || home);
   setEnabled('cut', selection.length > 0 && !inTrash() && !windows);
   setEnabled('copy', selection.length > 0);
-  // Files copied in Windows keep Paste pressable while locked, so pressing it can say why it won't work.
-  const lockedPaste = !state.clipboard && state.windowsFiles > 0 && !state.status.doorOpen;
-  setEnabled('paste', isFiles && (canPaste() || lockedPaste) && !inTrash() && !windows);
-  $('paste').title = lockedPaste ? 'Paste (Ctrl+V)\nUnlock Windows access first.' : 'Paste (Ctrl+V)';
+  setEnabled('paste', isFiles && canPaste() && !inTrash() && !windows);
   setEnabled('rename', selection.length === 1 && !inTrash() && !windows);
   $('trash-restore').hidden = !inTrash();
   $('trash-empty').hidden = !inTrash();
@@ -1822,50 +2047,63 @@ function renderHouseNote() {
     : 'Locked: rooms can\'t see your C: drive.\nClick to unlock.';
 }
 
-async function loadFolder() {
-  const tab = state.active;
+// `alone`: not the folder's other half too. A change to files (a move, a paste) draws the other half as well.
+async function loadFolder(tab = state.active, alone = false) {
   if (!tab || tab.kind !== 'files') return;
+  const view = viewOf(tab);
   const folder = tab.path;
+  const mate = tab.splitWith?.kind === 'files' && !alone ? tab.splitWith : null;
+  if (mate && mate.listed) loadFolder(mate, true);
   // Small pictures still waiting to be made for the folder just left aren't needed (lib/thumbs.js).
   if (tab.listed && tab.listed !== folder) call('thumbsLeft', tab.listed).catch(() => {});
   tab.listed = folder;
-  showHome(folder === HOME_PAGE);
+  view.tab = tab;
   if (folder === HOME_PAGE) {
-    state.entries = [];
-    state.selected = new Set();
-    tab.el.querySelector('.tab-title').textContent = 'Home';
-    showPlaceIcon(tab);
-    renderChrome();
-    await renderHome();
+    await withView(view, () => {
+      showHome(true);
+      state.entries = [];
+      state.selected = new Set();
+      tab.el.querySelector('.tab-title').textContent = 'Home';
+      showPlaceIcon(tab);
+      renderChrome();
+      return renderHome();
+    });
     return;
   }
+  withView(view, () => showHome(false));
   // A slow folder that finishes after you've moved on must not replace what's on screen.
-  const stillWanted = () => state.active === tab && tab.path === folder;
+  const stillWanted = () => (state.active === tab || state.active?.splitWith === tab) && tab.path === folder;
   try {
     const entries = await call('list', folder, state.showHidden);
-    if (!stillWanted()) return;
-    state.entries = entries;
-    window.deepSearch?.rerun();
-    const known = new Set(entries.map((entry) => entry.path));
-    state.selected = new Set([...state.selected].filter((target) => known.has(target)));
-    tab.el.querySelector('.tab-title').textContent = baseName(folder);
-    showPlaceIcon(tab);
-    renderEntries();
-    // Once, on arriving. A later refresh mustn't move the list if you've scrolled away.
-    if (tab.revealSelected) rowsEl.querySelector('.selected')?.scrollIntoView({ block: 'nearest' });
-    tab.revealSelected = false;
+    if (!stillWanted() || view.tab !== tab) return;
+    withView(view, () => {
+      takeFolderView(view, folder);
+      state.entries = entries;
+      window.deepSearch?.rerun();
+      const known = new Set(entries.map((entry) => entry.path));
+      state.selected = new Set([...state.selected].filter((target) => known.has(target)));
+      tab.el.querySelector('.tab-title').textContent = baseName(folder);
+      showPlaceIcon(tab);
+      renderEntries();
+      // Once, on arriving. A later refresh mustn't move the list if you've scrolled away.
+      if (tab.revealSelected) rowsEl.querySelector('.selected')?.scrollIntoView({ block: 'nearest' });
+      tab.revealSelected = false;
+    });
   } catch (error) {
-    if (!stillWanted()) return;
+    if (!stillWanted() || view.tab !== tab) return;
+    delete prefs.folderViews[folder];
     // Stays on the last folder that worked, so the address bar always matches what's listed.
     const previous = tab.back.pop();
     if (previous === undefined) {
-      state.entries = [];
-      renderEntries();
+      withView(view, () => {
+        state.entries = [];
+        renderEntries();
+      });
     } else {
       tab.path = previous;
     }
     await alertBox('This folder can\'t be opened', cleanError(error));
-    if (previous !== undefined) loadFolder();
+    if (previous !== undefined) loadFolder(tab, true);
   }
 }
 
@@ -1891,7 +2129,7 @@ function navigate(target, keepHistory) {
   tab.revealSelected = Boolean(cameFrom);
   state.search = '';
   $('search').value = '';
-  loadFolder();
+  loadFolder(tab, true);
 }
 
 function navPath(key) {
@@ -2284,12 +2522,14 @@ function dropTargetAt(x, y) {
     const sameFolder = paths.every((source) => parentOf(source) === folder);
     return { node, path: folder, name, ok: !sameFolder || dragging.copy };
   };
+  // A list in either half: onto a folder in it, or its empty space for that half's own folder.
+  const half = views.find((view) => view.rows.contains(under));
   const item = under.closest('[data-path]');
-  if (item && rowsEl.contains(item)) {
-    const entry = state.entries.find((candidate) => candidate.path === item.dataset.path);
+  if (half && item) {
+    const entry = keepOf(half).entries.find((candidate) => candidate.path === item.dataset.path);
     if (entry?.isDir && !paths.includes(entry.path)) return into(entry.path, shownName(entry), item);
   }
-  if (under.closest('#rows') && state.active?.kind === 'files' && !inTrash()) return into(state.active.path, baseName(state.active.path), null);
+  if (half?.tab && half.tab.path !== state.trash) return into(half.tab.path, baseName(half.tab.path), null);
   // Home is a page, not a folder: nothing can be dropped on it.
   const place = under.closest('.nav-item');
   if (place) return navPath(place.dataset.nav) === HOME_PAGE ? null : into(navPath(place.dataset.nav), place.querySelector('span').textContent, place);
@@ -2681,10 +2921,10 @@ function invertSelection() {
 /* ---------- File actions ---------- */
 
 /* Two clipboards, as one: things copied in here, and files copied in Windows File Explorer.
-   Whichever was copied last is what Paste uses, as in Explorer. Files from Windows can only be
-   pasted while the Windows door is unlocked. A picture copied in Windows, such as a screen snip,
-   pastes as a new picture file, but only unlocked: locked, nothing comes in from Windows. */
-const canPaste = () => Boolean(state.clipboard) || (state.windowsFiles > 0 && state.status.doorOpen) || state.windowsPicture;
+   Whichever was copied last is what Paste uses, as in Explorer. The lock doesn't matter here: the
+   clipboard belongs to Windows. A picture copied in Windows, such as a screen snip, pastes as a
+   new picture file. */
+const canPaste = () => Boolean(state.clipboard) || state.windowsFiles > 0 || state.windowsPicture;
 
 function toClipboard(move) {
   if (move && inTrash()) return;
@@ -2719,24 +2959,16 @@ function windowsClipboardChanged(count, ours = false, picture = false) {
   if (state.active?.kind === 'files') renderEntries();
 }
 
-// Paste, or a short note saying why it can't: locked, nothing copied, or in the Trash.
+// Paste, or a short note saying why it can't: nothing copied, or in the Trash.
 function pasteOrSay() {
   if (state.active?.kind !== 'files') return;
   if (inTrash()) toast('Things can\'t be pasted into the Trash.');
   else if (onWindows()) toast(READ_ONLY);
-  else if (!state.clipboard && state.windowsFiles > 0 && !state.status.doorOpen) lockedNote();
   else if (!canPaste()) toast('Nothing is copied yet.');
   else pasteHere();
 }
 
-const lockedPictureNote = () => toast('Station 256 is locked. Unlock it to paste a picture copied in Windows.', 'Unlock', toggleDoor);
-const lockedNote = () => toast('Windows access is locked. Unlock it to bring files in.', 'Unlock', toggleDoor);
-
 async function pasteFromWindows() {
-  if (!state.status.doorOpen) {
-    lockedNote();
-    return;
-  }
   const dir = state.active.path;
   await copyFromWindows(state.windowsFiles, dir, () => call('pasteFromWindows', dir));
 }
@@ -2744,11 +2976,7 @@ async function pasteFromWindows() {
 // The picture becomes "Pasted image <date> <time>.png" here, picked so you can see it. Undo puts
 // it in the Trash.
 async function pastePicture() {
-  // Locked, a picture from Windows only comes in when it's a snip of Station itself (main.js): else it says so.
-  const made = await attempt(() => call('pastePicture', state.active.path).catch((error) => {
-    if (/door is locked/.test(error.message)) { lockedPictureNote(); return null; }
-    throw error;
-  }));
+  const made = await attempt(() => call('pastePicture', state.active.path));
   if (!made) return;
   const undo = { type: 'copy', label: 'paste', paths: [made] };
   remember(undo);
@@ -2990,13 +3218,10 @@ async function roomCloseItems(name) {
 
 // A closed room's terminals have nothing left to connect to, so their tabs go with it.
 function closeRoomTabs(name) {
-  const tabs = state.tabs.filter((tab) => tab.kind === 'term' && tab.room === name);
-  const wasShowing = tabs.includes(state.active);
-  tabs.forEach((tab) => {
+  state.tabs.filter((tab) => tab.kind === 'term' && tab.room === name).forEach((tab) => {
     call('termKill', tab.termId);
     removeTab(tab);
   });
-  if (wasShowing) showRoomFiles(name);
 }
 
 /* ---------- Preview overlay ---------- */
@@ -3222,7 +3447,7 @@ function previewStep(direction) {
 
 // File Explorer's Home, made for working with AI: a few fun numbers, every project with its room,
 // and recent files. The sidebar already has the folders, so they aren't repeated here.
-const homeView = $('home-view');
+let homeView = $('home-view');
 let homeData = null; // the last numbers, so the page shows at once while new ones are read
 let homeAsked = 0;
 
@@ -3354,9 +3579,7 @@ function projectCard(project) {
   buttons.append(button);
   // Rooms to close, Preview, New Room and the rest are in the card's right-click menu (projectMenu).
   const lifetime = project.tokensAllTime > 0 ? el('div', 'home-card-tokens', `${bigNumber(project.tokensAllTime)} tokens all time`) : null;
-  if (lifetime) lifetime.title = 'Everything AI read and wrote in this project\nCounted from its conversation records';
   card.append(top, el('div', 'home-card-note', note), ...(lifetime ? [lifetime] : []), buttons);
-  card.title = last ? `Last AI change: ${shortName(last.file || '', 28, true)}\n${modelName(last.model, last.tool)} · ${ago(last.time)}` : changed ? `Changed ${ago(changed)}` : '';
   window.ghUi?.decorate(card, project.name);
   card.addEventListener('click', () => navigate(project.path));
   card.addEventListener('keydown', (event) => { if (event.key === 'Enter' && event.target === card) navigate(project.path); });
@@ -3693,13 +3916,13 @@ let pinchTimer = 0;
 function holdWheelStep() {
   if (wheelStepOn) return;
   wheelStepOn = true;
-  rowsEl.addEventListener('wheel', stepViewByWheel, { passive: false });
+  views.forEach((view) => view.rows.addEventListener('wheel', stepViewByWheel, { passive: false }));
 }
 function dropWheelStep() {
   wheelStepOn = false;
   ctrlHeld = false;
   clearTimeout(pinchTimer);
-  rowsEl.removeEventListener('wheel', stepViewByWheel);
+  views.forEach((view) => view.rows.removeEventListener('wheel', stepViewByWheel));
 }
 window.addEventListener('keydown', (event) => {
   if (event.key !== 'Control') return;
@@ -3925,6 +4148,7 @@ function setSort(sortBy) {
     state.sortAsc = sortBy !== 'mtime';
   }
   renderEntries();
+  rememberFolderView();
 }
 
 $('sort-btn').addEventListener('click', (event) => {
@@ -3938,8 +4162,8 @@ $('sort-btn').addEventListener('click', (event) => {
     choice('Type', 'type', 'tag'),
     choice('Size', 'size', 'data_bar_vertical'),
     '-',
-    { label: 'Ascending', icon: 'arrow_sort_up', checked: state.sortAsc, run: () => { state.sortAsc = true; renderEntries(); } },
-    { label: 'Descending', icon: 'arrow_sort_down', checked: !state.sortAsc, run: () => { state.sortAsc = false; renderEntries(); } },
+    { label: 'Ascending', icon: 'arrow_sort_up', checked: state.sortAsc, run: () => { state.sortAsc = true; renderEntries(); rememberFolderView(); } },
+    { label: 'Descending', icon: 'arrow_sort_down', checked: !state.sortAsc, run: () => { state.sortAsc = false; renderEntries(); rememberFolderView(); } },
   ]);
 });
 
@@ -3964,13 +4188,33 @@ function setViewMode(mode) {
   showViewMode();
   rowsEl.scrollLeft = 0;
   renderEntries();
-  call('setViewMode', mode).catch(() => {});
+  rememberFolderView();
 }
 
-async function loadViewMode() {
-  const saved = await call('viewMode').catch(() => null);
-  if (VIEWS.some((view) => view.id === saved)) state.viewMode = saved;
+// Each folder remembers its own view and sort, as in File Explorer (prefs.folderViews, newest last).
+// A folder never changed uses its place's usual look: Pictures and Videos big, the rest Details.
+const MAX_FOLDER_VIEWS = 500;
+function usualView(folder) {
+  const big = folder === `${state.home}/Pictures` || folder === `${state.home}/Videos`;
+  return { v: big ? 'large' : 'details', by: 'name', asc: true };
+}
+function takeFolderView(view, folder) {
+  if (view.viewFolder === folder) return; // a refresh keeps what's on screen
+  view.viewFolder = folder;
+  const own = prefs.folderViews[folder] || usualView(folder);
+  state.viewMode = VIEWS.some((item) => item.id === own.v) ? own.v : 'details';
+  state.sortBy = typeof own.by === 'string' ? own.by : 'name';
+  state.sortAsc = own.asc !== false;
   showViewMode();
+}
+function rememberFolderView() {
+  const folder = bound.tab?.path;
+  if (!folder || folder === HOME_PAGE) return;
+  delete prefs.folderViews[folder];
+  prefs.folderViews[folder] = { v: state.viewMode, by: state.sortBy, asc: state.sortAsc };
+  const folders = Object.keys(prefs.folderViews);
+  folders.slice(0, Math.max(0, folders.length - MAX_FOLDER_VIEWS)).forEach((old) => { delete prefs.folderViews[old]; });
+  call('setPrefs', { folderViews: prefs.folderViews }).catch(() => {});
 }
 
 $('view-btn').addEventListener('click', (event) => {
@@ -3992,7 +4236,7 @@ $('view-btn').addEventListener('click', (event) => {
 
 // Tick boxes beside every item, for picking several without holding Ctrl. On by default.
 function showChecks() {
-  filesView.classList.toggle('checks', prefs.checks);
+  views.forEach((view) => view.root.classList.toggle('checks', prefs.checks));
 }
 
 function setChecks(on) {
@@ -4006,6 +4250,8 @@ async function loadPrefs() {
   if (typeof saved.checks === 'boolean') prefs.checks = saved.checks;
   if (typeof saved.activityOpen === 'boolean') prefs.activityOpen = saved.activityOpen;
   if (typeof saved.activitySeen === 'string') prefs.activitySeen = saved.activitySeen;
+  prefs.darkSites = saved.darkSites === true;
+  if (saved.folderViews && typeof saved.folderViews === 'object') prefs.folderViews = saved.folderViews;
   showChecks();
 }
 
@@ -4029,15 +4275,16 @@ const COLUMN_MAX = 900;
 const NAME_ROOM = 150; // the least Name gets in a narrow list before another column steps aside
 const columnDefaults = () => ({ order: ['name', 'mtime', 'editor', 'reader', 'tokens', 'type', 'size'], widths: { name: 273, mtime: 144, editor: 140, reader: 150, tokens: 70, type: 110, size: 80 }, hidden: [] });
 let columnSetup = columnDefaults();
-let columnsSqueezedOut = [];
-const columnsEl = $('columns');
-const columnDrop = $('col-drop');
+let columnsEl = $('columns');
+let columnDrop = $('col-drop');
 const clampColumn = (key, width) => Math.round(Math.min(COLUMN_MAX, Math.max(COLUMN_MIN[key], width)));
 const saveColumns = () => call('setColumns', columnSetup).catch(() => {});
 
 // Lays the columns out from the settings. The cells stay put in the page and CSS moves them,
 // so nothing has to be rebuilt, however long the list is.
-function applyColumns() {
+function applyColumns(view) {
+  if (!view) { views.forEach(applyColumns); return; }
+  const filesView = view.root;
   // A smaller window hides Type, then Date, then Last edited by, so Name always has room to be
   // read, even with the System panel open beside it. While a terminal tab is showing there's no
   // width to go by.
@@ -4051,10 +4298,10 @@ function applyColumns() {
     for (const key of ['type', 'tokens', 'reader', 'mtime', 'editor']) {
       if ((out.length || ['type', 'tokens', 'reader'].includes(key)) && !out.includes(key) && room - beside() < NAME_ROOM) out.push(key);
     }
-    columnsSqueezedOut = out;
+    view.squeezed = out;
   }
-  const squeezed = columnsSqueezedOut.length > 0;
-  const gone = new Set([...columnSetup.hidden, ...columnsSqueezedOut]);
+  const squeezed = view.squeezed.length > 0;
+  const gone = new Set([...columnSetup.hidden, ...view.squeezed]);
   const shown = columnSetup.order.filter((key) => !gone.has(key));
   // Squeezed, Name takes what's left. Otherwise the widths are as set, and a spare track fills any extra room.
   const tracks = shown.map((key) => (squeezed && key === 'name' ? 'minmax(0, 1fr)' : `${columnSetup.widths[key]}px`));
@@ -4069,16 +4316,15 @@ function applyColumns() {
   });
 }
 
-new ResizeObserver(applyColumns).observe(filesView);
 
 // The list scrolls sideways when the columns are wider than it. The headers go with it.
-rowsEl.addEventListener('scroll', () => {
-  columnsEl.style.transform = `translateX(${-rowsEl.scrollLeft}px)`;
+rowsEl.addEventListener('scroll', (event) => {
+  const list = event.currentTarget;
+  list.parentNode.querySelector('.columns').style.transform = `translateX(${-list.scrollLeft}px)`;
 }, { passive: true });
 
 // The list's scrollbar narrows the rows but not the header, so with Name taking what is left, every column after it
 // would sit a bar's width out of line. The header gives the bar's width back.
-new ResizeObserver(() => { columnsEl.style.paddingRight = `${rowsEl.offsetWidth - rowsEl.clientWidth}px`; }).observe(rowsEl);
 
 async function loadColumns() {
   const saved = await call('columns').catch(() => ({}));
@@ -4122,7 +4368,9 @@ const fitColumns = (keys) => changeColumns(() => keys.forEach((key) => { columnS
 
 let headerDragged = false;
 
-columnsEl.querySelectorAll('button').forEach((button) => {
+// The headings: sort, resize and move. Wired once for each Files section (makeView).
+function wireColumns(columns) {
+  columns.querySelectorAll('button').forEach((button) => {
   const key = button.dataset.sort;
   const grip = el('span', 'col-grip');
   button.append(grip);
@@ -4187,7 +4435,8 @@ columnsEl.querySelectorAll('button').forEach((button) => {
       },
     });
   });
-});
+  });
+}
 
 columnsEl.addEventListener('contextmenu', (event) => {
   event.preventDefault();
@@ -4318,8 +4567,8 @@ $('room-close-btn').addEventListener('click', () => {
 
 /* ---------- Windows door ---------- */
 
-// Locking is always safe, so it happens straight away. Rooms that could still read Windows files
-// close to do it, and a short note names them. Unlocking asks first.
+// Locking is always safe, so it happens straight away. Rooms that could read Windows files lose
+// /windows but are never closed, and a short note names them. Unlocking asks first.
 async function toggleDoor() {
   const { doorOpen, rooms } = state.status;
   if (doorOpen) {
@@ -4328,10 +4577,7 @@ async function toggleDoor() {
       await call('closeDoor');
       return true;
     });
-    if (locked && held.length) {
-      held.forEach(closeRoomTabs);
-      toast(`Locked. ${held.length === 1 ? 'This room' : 'These rooms'} closed to do it: ${nameList(held)}.`);
-    }
+    if (locked && held.length) toast(`Locked. These rooms stay open but can't see Windows files now: ${nameList(held)}.`);
   } else {
     const yes = await confirmBox(
       'Unlock Windows Files?',
@@ -4527,14 +4773,8 @@ function copyFromWindows(count, dir, run) {
 // Station's engine (main.js, lib/) changed on disk: one click starts it again with the new code.
 window.house.on('engine:changed', () => toast('Station 256 was updated behind the scenes.', 'Restart now', () => call('restartStation').catch(() => {})));
 
-// Lock is closed, so a copy stayed in the house (main.js). Said at most every 20 seconds.
-let lockedCopyToldAt = 0;
-window.house.on('clipboard:locked', (from) => {
-  if (from === 'in') { lockedPictureNote(); return; } // something copied in Windows, pasted here
-  if (Date.now() - lockedCopyToldAt < 20000) return;
-  lockedCopyToldAt = Date.now();
-  toast('Station 256 is locked. Unlock it (lock button, top right) to paste what you copy here into Windows.');
-});
+// Text was copied here but the Windows helper isn't linked (main.js says so once per time it's away).
+window.house.on('clipboard:no-helper', () => toast('Copied here. Windows can\'t paste it until the Windows helper is back.'));
 
 window.house.on('window:link', (message) => {
   if (message.type === 'page-scale') {
@@ -5476,7 +5716,7 @@ async function reloadWindow() {
   };
   try { sessionStorage.setItem(RELOAD_MARK, JSON.stringify(note)); } catch { /* it starts with the loading screen anyway */ }
   await Promise.all([wait(SPLASH_IN_MS), flushDocs()]);
-  const going = await call('liveReload', state.tabs.map(describeTab), state.tabs.indexOf(state.active)).catch(() => false);
+  const going = await call('liveReload', describeAll(), state.tabs.indexOf(state.active)).catch(() => false);
   if (!going) window.location.reload(); // no tabs to keep: it starts like Station 256 does
 }
 
@@ -5490,7 +5730,7 @@ window.house.on('live:reload', () => {
     }
     try { sessionStorage.setItem(LIVE_MARK, '1'); } catch { /* it starts with the loading screen */ }
     await flushDocs();
-    const going = await call('liveReload', state.tabs.map(describeTab), state.tabs.indexOf(state.active)).catch(() => false);
+    const going = await call('liveReload', describeAll(), state.tabs.indexOf(state.active)).catch(() => false);
     if (going) return;
     liveWaiting = false;
     try { sessionStorage.removeItem(LIVE_MARK); } catch { /* nothing to undo */ }
@@ -5534,6 +5774,57 @@ if (quietStart) {
   clearTimeout(splashLimit);
 }
 
+// The Files sections. The one in the page is made now; the copy when two Files tabs first pair.
+EventTarget.prototype.addEventListener = addNative; // the page's own wiring is done
+const sectionNodes = (root) => [root, ...root.querySelectorAll('*')];
+const startNodes = sectionNodes(filesView);
+const startListeners = viewListeners.map(([node, args]) => [startNodes.indexOf(node), args]).filter(([at]) => at >= 0);
+const pristine = filesView.cloneNode(true);
+pristine.querySelectorAll('.col-grip').forEach((grip) => grip.remove());
+function makeView(root) {
+  const view = {
+    root,
+    rows: root.querySelector('.rows'),
+    columns: root.querySelector('.columns'),
+    home: root.querySelector('.home-view'),
+    drop: root.querySelector('.col-drop'),
+    ids: Object.fromEntries(sectionNodes(root).filter((node) => node.id).map((node) => [node.id, node])),
+    keep: { entries: [], selected: new Set(), anchor: null, focus: null, search: '', viewMode: 'details', sortBy: 'name', sortAsc: true },
+    viewFolder: null, // the folder whose remembered view this half last took on
+    tab: null, // the Files tab it shows
+    squeezed: [],
+  };
+  views.push(view);
+  new ResizeObserver(() => applyColumns(view)).observe(root);
+  new ResizeObserver(() => { view.columns.style.paddingRight = `${view.rows.offsetWidth - view.rows.clientWidth}px`; }).observe(view.rows);
+  // Pressing or tabbing into a half makes it the tab in front.
+  for (const name of ['pointerdown', 'focus']) {
+    root.addEventListener(name, () => {
+      const one = state.tabs.find((tab) => tab.kind === 'files' && viewOf(tab) === view && [state.active, state.active?.splitWith].includes(tab));
+      if (one) halfEntered(one);
+    }, true);
+  }
+  return view;
+}
+bound = makeView(filesView);
+wireColumns(columnsEl);
+// The second section, the first time it's needed.
+function otherView(view) {
+  if (views[1]) return views[1] === view ? views[0] : views[1];
+  const root = pristine.cloneNode(true);
+  const nodes = sectionNodes(root);
+  startListeners.forEach(([at, [type, listener, options]]) => addNative.call(nodes[at], type, listener, options));
+  root.querySelector('.drop-shade')?.remove();
+  const copy = makeView(root);
+  Object.entries(copy.ids).forEach(([id, node]) => { node.id = `${id}-b`; });
+  root.hidden = true;
+  filesView.after(root);
+  wireColumns(copy.columns); // the headings hold their own buttons, so they're wired again, not copied
+  if (wheelStepOn) copy.rows.addEventListener('wheel', stepViewByWheel, { passive: false });
+  applyColumns(copy);
+  return copy;
+}
+
 (async function start() {
   const opening = await call('windowStart').catch(() => null);
   if (opening) Object.assign(windowInfo, { count: opening.count, main: opening.main });
@@ -5541,14 +5832,22 @@ if (quietStart) {
   if (!quietStart) showSplash();
   await loadNavPane();
   await loadColumns();
-  await loadViewMode();
   await loadPrefs();
   Object.assign(state, await call('paths'));
   await attempt(() => call('ensureFolder', state.projects));
   // The tabs it was made from, in order, the last one in front. The window never waits on Docker,
   // which can be slow or stuck while the house starts.
   const added = [];
+  // The scripts after this one (doc-tab.js, obscura-tab.js...) open some kinds of tab, so they must be in.
+  if (handed.length && document.readyState !== 'complete') await new Promise((done) => { window.addEventListener('load', done, { once: true }); });
   for (const incoming of handed) added.push(await addMovedTab(incoming));
+  // The two halves of a pair, found by the number they share.
+  const halves = new Map();
+  handed.forEach((incoming, at) => {
+    const first = halves.get(incoming?.pair?.id);
+    if (first) pairTabs(first.tab, added[at], first.pair.side, first.pair.at);
+    else if (added[at] && incoming?.pair) halves.set(incoming.pair.id, { tab: added[at], pair: incoming.pair });
+  });
   if (!state.tabs.length) openFilesTab(HOME_PAGE);
   // After a new version loads, the tab that was in front is in front again.
   const front = Number.isInteger(opening?.front) ? added[opening.front] : null;
@@ -5589,4 +5888,4 @@ if (quietStart) {
 }());
 
 // Used only by the automated self-test.
-window.houseTest = { state, windowInfo, activateTab, openTerminal, enterRoom, openAgents, navigate, closeRoom: (name) => call('closeRoom', name), popOutTab, dropTab, closeTab, refreshStatus, toggleSystem, showRules, showPreview, loadFolder, toggleDoor, ghost: { show: showTabGhost, move: moveTabGhost, land: landTabGhost, hide: hideTabGhost, el: tabGhost } };
+window.houseTest = { state, windowInfo, activateTab, openTerminal, enterRoom, openAgents, navigate, closeRoom: (name) => call('closeRoom', name), popOutTab, dropTab, closeTab, pairTabs, separateTabs, refreshStatus, toggleSystem, showRules, showPreview, loadFolder, toggleDoor, ghost: { show: showTabGhost, move: moveTabGhost, land: landTabGhost, hide: hideTabGhost, el: tabGhost } };

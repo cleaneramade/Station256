@@ -12,7 +12,6 @@ const archive = require('./lib/archive');
 const docx = require('./lib/docx');
 const thumbs = require('./lib/thumbs');
 const pictureDetails = require('./lib/picture-details');
-const snipMatch = require('./lib/snip-match');
 const video = require('./lib/video');
 const music = require('./lib/music');
 const editorApp = require('./lib/editor-app');
@@ -154,6 +153,8 @@ let lastDrop = null;
 let dropCount = 0;
 // How many files are copied in Windows right now, as the helper last said.
 let windowsClipboardCount = 0;
+// Whether the windows were told that a text copy couldn't reach Windows (no helper).
+let toldNoHelper = false;
 // Whether the newest thing copied in Windows is a picture (a screen snip, say), as the helper last
 // said. Windows is only asked for the picture itself when you paste (lib/pasted-image.js).
 let windowsPicture = false;
@@ -162,32 +163,6 @@ const picturesInChecks = { png: null };
 // Test copies (checks) never put a window on the real screen, unless SHOT_SHOW=1 asks to watch them.
 const testCopy = () => Boolean(process.env.HOUSE_SHOTS || process.env.HOUSE_FITTEST || process.env.HOUSE_ZOOMWALK);
 const offScreen = () => Boolean((process.env.HOUSE_SHOTS || process.env.HOUSE_FITTEST) && !process.env.SHOT_SHOW);
-// Lock keeps what is copied in Windows out of Station, but a snip of Station itself shows only what
-// Station already shows, so it may come in (lib/snip-match.js). Decided when the snip is made, while
-// Station still looks the way it did in the snip.
-let snipOfStation = Promise.resolve(false);
-function judgeSnip() {
-  snipOfStation = (async () => {
-    if (await files.doorIsOpen()) return false; // unlocked: nothing to decide
-    const png = await copiedPicture();
-    if (!png) return false;
-    const bitmap = (image) => { const size = image.getSize(); return { w: size.width, h: size.height, data: image.toBitmap() }; };
-    const snip = nativeImage.createFromBuffer(png);
-    const shots = [];
-    for (const win of stations) if (!win.isDestroyed() && win.isVisible() && !win.isMinimized()) shots.push(await win.webContents.capturePage());
-    if (process.env.HOUSE_SNIPDEBUG) {
-      fs.mkdirSync('/tmp/snipdebug', { recursive: true });
-      fs.writeFileSync('/tmp/snipdebug/snip.png', snip.toPNG());
-      shots.forEach((shot, index) => fs.writeFileSync(`/tmp/snipdebug/station-${index}.png`, shot.toPNG()));
-    }
-    const started = Date.now();
-    const yes = snipMatch.isPieceOf(bitmap(snip), shots.map(bitmap));
-    if (process.env.HOUSE_SNIPDEBUG) console.log(`SNIP of Station: ${yes} (${snip.getSize().width}x${snip.getSize().height}, ${shots.map((shot) => `${shot.getSize().width}x${shot.getSize().height}`)}, ${Date.now() - started} ms)`);
-    return yes;
-  })().catch((error) => { console.log('snip check failed:', error.message); return false; });
-}
-// Whether a picture copied in Windows may come in now: unlocked, or a snip of Station itself.
-const pictureMayCome = async () => await files.doorIsOpen() || snipOfStation;
 const copiedPicture = () => (process.env.HOUSE_SHOTS ? Promise.resolve(picturesInChecks.png) : windowsLink.clipboardImage());
 // For places only Windows can read, such as a network drive.
 const windowsCopier = { measure: windowsLink.measure, copy: windowsLink.copyIn };
@@ -711,7 +686,7 @@ function closeQuietly(win) {
 // What a page says about a tab moving to another window, checked. A Files tab carries its folder
 // and its Back and Forward lists; a terminal is found by its number.
 const stringList = (list) => (Array.isArray(list) ? list.filter((item) => typeof item === 'string' && item.length < 4096).slice(-100) : []);
-function cleanTab(tab) {
+function cleanTab(tab, forReload = false) {
   const kind = tab && typeof tab === 'object' ? tab.kind : null;
   // A Files tab's place is a folder, or 'home:', the Home page.
   if (kind === 'files' && typeof tab.path === 'string' && (tab.path.startsWith('/') || tab.path === 'home:') && tab.path.length < 4096) {
@@ -731,16 +706,26 @@ function cleanTab(tab) {
     const edits = tab.edits && typeof tab.edits === 'object' && JSON.stringify(tab.edits).length < 20000 ? JSON.parse(JSON.stringify(tab.edits)) : null;
     return { kind, path: tab.path, edits };
   }
+  // A browser page: its address. An AI's page (its project and terminal tab) only goes through a reload,
+  // to come back behind the owner's tabs; it never moves to another window.
+  if (kind === 'obscura') {
+    const url = typeof tab.url === 'string' && /^https?:\/\//i.test(tab.url) && tab.url.length < 8192 ? tab.url : '';
+    if (!tab.ai) return { kind, url };
+    const { project, session } = tab.ai;
+    if (forReload && typeof project === 'string' && /^[\w .-]{1,100}$/.test(project) && typeof session === 'string' && /^(tab-\d{1,4})?$/.test(session)) return { kind, url, ai: { project, session } };
+  }
   throw new Error('That tab can\'t move to another window.');
 }
+// Which tabs were a pair, carried through a reload (renderer/app.js describeAll).
+const cleanPair = (pair) => (pair && Number.isInteger(pair.id) && (pair.side === 'left' || pair.side === 'right') && Number.isFinite(pair.at) ? { id: pair.id, side: pair.side, at: pair.at } : null);
 
 // Hands a tab to another window. A terminal is handed over here first, so nothing it prints is
 // lost, and closing the window it came from can't end it. Carried there, the window comes to the
 // front only once the tab has faded in, so what was carried fades out over it rather than vanishing.
 const LAND_MS = 200;
-function sendTab(target, tab, carried = false) {
+function sendTab(target, tab, carried = false, side = null) {
   if (tab.kind === 'term') terminals.attach(tab.termId, target.webContents);
-  target.webContents.send('tab:arrive', { tab });
+  target.webContents.send('tab:arrive', { tab, side }); // side: it lands as a half beside the tab in front
   if (!carried) bringForward(target);
   else setTimeout(() => { if (!target.isDestroyed()) bringForward(target); }, LAND_MS);
 }
@@ -797,6 +782,29 @@ function cursorOnTabs(win) {
 function tabsUnderPointer(source) {
   return focusOrder.find((win) => win !== source && !win.isDestroyed() && cursorOnTabs(win) !== null) || null;
 }
+
+// Over a window's page (not its tabs): where, in the page's own units, or null.
+function cursorOnPage(win) {
+  const frame = frames.get(win.webContents.id);
+  if (!frame || appMinimized.has(win) || win.isMinimized()) return null;
+  const point = screen.getCursorScreenPoint();
+  const { box } = frame;
+  const zoom = win.webContents.getZoomFactor();
+  const inside = point.x >= box.x && point.x < box.x + box.w && point.y >= box.y + TAB_ROW * zoom && point.y < box.y + box.h;
+  const at = win.getBounds();
+  return inside ? { x: (point.x - at.x) / zoom, y: (point.y - at.y) / zoom } : null;
+}
+
+// While a tab is carried over another window's page, that page shows the half it would take and
+// says which (tabHalfIs). Let go there, the tab lands beside the tab in front.
+let halfIn = null; // { win, side }
+function showHalf(target, kind) {
+  if (halfIn && halfIn.win !== target && !halfIn.win.isDestroyed()) halfIn.win.webContents.send('tab:half', null);
+  halfIn = target ? { win: target, side: halfIn?.win === target ? halfIn.side : null } : null;
+  const at = target && cursorOnPage(target);
+  if (at) target.webContents.send('tab:half', { ...at, kind });
+}
+const pageUnderPointer = (source) => focusOrder.find((win) => win !== source && !win.isDestroyed() && cursorOnPage(win) !== null) || null;
 
 // While a tab is carried over a window's tabs, a gap opens there where it would land.
 let gapIn = null;
@@ -982,6 +990,15 @@ const api = {
   cleanupNow: () => runCleanup(),
   setCleanup: (_event, on) => saveSettings({ cleanup: on !== false }),
   prefs: () => readSettings().prefs || {},
+  // Websites see dark in the browser tabs (lib/obscura.js): kept in prefs.darkSites, applied to every page
+  // and told to every window, so each tab's button agrees.
+  obscuraDark: (_event, on) => {
+    const dark = on === true;
+    saveSettings({ prefs: { ...(readSettings().prefs || {}), darkSites: dark } });
+    obscuraApp.setDark(dark);
+    toAll('obscura:dark', dark);
+    return dark;
+  },
   setPrefs: (_event, change) => saveSettings({ prefs: { ...(readSettings().prefs || {}), ...change } }),
   rename: async (_event, target, name) => {
     const [held] = await house.heldByRooms([target]);
@@ -1104,7 +1121,8 @@ const api = {
   editorReady: () => editorApp.ready(),
   // The page only says where a drop goes, never which Windows files to read, so only a real drop
   // from the helper can bring Windows files in, and each drop only once.
-  importDrop: (event, id, dir) => {
+  importDrop: async (event, id, dir) => {
+    await files.assertDoorOpen(); // dropping still needs the door; pasting doesn't
     if (!lastDrop || lastDrop.id !== id) throw new Error('That drop was already used. Please drag the files in again.');
     const { files: sources } = lastDrop;
     lastDrop = null;
@@ -1114,19 +1132,16 @@ const api = {
   dropArea: (event, box, open) => {
     if (fromHelperWindow(event)) windowsLink.dropArea(box, open);
   },
-  // Files copied in Windows File Explorer. The lock is checked before Windows is even asked which.
+  // Files copied in Windows File Explorer: an explicit paste, so the lock doesn't matter.
   windowsClipboard: () => windowsClipboardCount,
   pasteFromWindows: async (event, dir) => {
-    await files.assertDoorOpen();
     const sources = await windowsLink.clipboardFiles();
     if (!sources.length) throw new Error('No files are copied in Windows anymore. Copy them in File Explorer again.');
     return files.importFromWindows(sources, dir, windowsCopier, progressTo(event.sender));
   },
-  // A picture copied in Windows, pasted into a folder as "Pasted image <date> <time>.png". Locked, it stays
-  // out like everything else from Windows (and says so); unlocked, it pastes.
+  // A picture copied in Windows, pasted into a folder as "Pasted image <date> <time>.png".
   windowsPicture: () => windowsPicture,
   pastePicture: async (_event, dir) => {
-    if (windowsPicture && !await pictureMayCome()) throw new Error('The Windows door is locked. Unlock it with the lock button at the top right, then try again.');
     const png = windowsPicture ? await copiedPicture() : null;
     if (!png) throw new Error('No picture is copied in Windows anymore. Copy it again.');
     return files.makeFile(dir, pastedImage.folderName(), png);
@@ -1242,6 +1257,12 @@ const api = {
     const target = tabsUnderPointer(source);
     if (gapIn !== target) showGap(null);
     gapIn = null; // the window it lands in closes its own gap
+    const half = !target && halfIn?.side && !halfIn.win.isDestroyed() && pageUnderPointer(source) === halfIn.win ? halfIn : null;
+    showHalf(null);
+    if (half) {
+      sendTab(half.win, clean, true, half.side);
+      return { where: 'moved' };
+    }
     if (target) {
       sendTab(target, clean, true);
       return { where: 'moved' };
@@ -1249,10 +1270,25 @@ const api = {
     return { where: 'popped', box: openInNewWindow(source, clean, true) };
   },
   // While a tab is carried: shows the gap in the tabs it's over, and says whether it's over some.
-  tabHover: (event, active) => {
-    const target = active ? tabsUnderPointer(BrowserWindow.fromWebContents(event.sender)) : null;
+  tabHover: (event, active, kind) => {
+    const source = BrowserWindow.fromWebContents(event.sender);
+    const target = active ? tabsUnderPointer(source) : null;
     showGap(target);
-    return Boolean(target);
+    const page = active && !target && typeof kind === 'string' ? pageUnderPointer(source) : null;
+    showHalf(page, kind);
+    return target ? 'tabs' : page ? 'page' : false; // over a window's tabs, over its page, or neither
+  },
+  // A picture of the page area, for the card that follows a carried tab out of the window. Null if it
+  // takes more than 50 ms or comes back empty (then the card shows a plain stand-in).
+  tabSnapshot: async (event, box) => {
+    if (!box || !['x', 'y', 'w', 'h'].every((key) => Number.isFinite(box[key])) || box.w < 1 || box.h < 1) return null;
+    const zoom = event.sender.getZoomFactor();
+    const rect = { x: Math.round(box.x * zoom), y: Math.round(box.y * zoom), width: Math.round(box.w * zoom), height: Math.round(box.h * zoom) };
+    const image = await Promise.race([event.sender.capturePage(rect), wait(50).then(() => null)]).catch(() => null);
+    return image && !image.isEmpty() ? image.resize({ width: 340 }).toDataURL() : null;
+  },
+  tabHalfIs: (event, side) => {
+    if (halfIn?.win.webContents === event.sender) halfIn.side = side === 'left' || side === 'right' ? side : null;
   },
   // A window with one tab, carried by that tab onto another window's tabs: the tab joins them and
   // its window closes, once the tab has faded in there.
@@ -1294,7 +1330,7 @@ const api = {
     let frontAt = null;
     (Array.isArray(tabs) ? tabs.slice(0, 200) : []).forEach((tab, at) => {
       try {
-        kept.push(cleanTab(tab));
+        kept.push({ ...cleanTab(tab, true), pair: cleanPair(tab.pair) });
         if (at === front) frontAt = kept.length - 1;
       } catch { /* gone */ }
     });
@@ -1304,6 +1340,14 @@ const api = {
     const contents = event.sender;
     setTimeout(() => { if (!contents.isDestroyed()) contents.reloadIgnoringCache(); }, 0);
     return true;
+  },
+  // "Arrange Windows Side by Side": every window (the one asked from first) takes its own spot on the
+  // screen, each page placing itself (renderer/window-motion.js).
+  arrangeWindows: (event) => {
+    const asker = BrowserWindow.fromWebContents(event.sender);
+    const wins = [asker, ...stations.filter((win) => win !== asker)].filter((win) => win && !win.isDestroyed());
+    wins.forEach((win, index) => win.webContents.send('window:arrange', { index, count: wins.length }));
+    return wins.length;
   },
   // A window made for a tab has it in, so it can come on screen.
   windowFilled: (event) => { tabsIn.get(event.sender.id)?.(); },
@@ -1318,7 +1362,6 @@ const api = {
   // Ctrl+V in a terminal: the text copied, or, when the newest copy in Windows is a picture, the
   // path of a file holding it, saved where the terminal can reach it (lib/pasted-image.js).
   termPaste: async (_event, id) => {
-    if (windowsPicture && !await pictureMayCome()) { toAll('clipboard:locked', 'in'); return ''; } // locked: nothing from Windows comes in, and it says so
     const png = windowsPicture ? await copiedPicture() : null;
     if (!png) return clipboard.readText();
     const room = terminals.roomOf(id);
@@ -1326,7 +1369,14 @@ const api = {
   },
   // Copied in the house: on the house's clipboard and on Windows' too (lib/clipboard.js).
   // Either is newer than a picture copied in Windows, even before Windows says so.
-  clipboardWrite: (_event, text) => { windowsPicture = false; return sharedClipboard.copyText(text); },
+  clipboardWrite: async (_event, text) => {
+    windowsPicture = false;
+    const reply = await sharedClipboard.copyText(text);
+    // Said once per time the Windows helper is away, not on every copy.
+    if (reply?.ok === false && !toldNoHelper) toAll('clipboard:no-helper');
+    if (reply) toldNoHelper = reply.ok === false;
+    return reply;
+  },
   clipboardFiles: (_event, paths, move) => { windowsPicture = false; return sharedClipboard.copyFiles(paths, move); },
 
   pageScale: () => pageScale,
@@ -1374,7 +1424,7 @@ const api = {
   obscuraFront: (event, on) => obscuraApp.setFront(event.sender, on === true),
   // The window's answer to lib/ai-browser.js (a tab's page id, or the owner's yes or no), and the tab's Stop.
   aiBrowserAnswer: (_event, ask, value) => { aiBrowserApp?.answer(ask, value); },
-  aiBrowserStop: (_event, project) => { if (typeof project === 'string') aiBrowserApp?.stop(project); },
+  aiBrowserStop: (_event, project, session) => { if (typeof project === 'string') aiBrowserApp?.stop(project, typeof session === 'string' ? session : ''); },
 };
 
 ipcMain.handle('call', (event, name, args) => {
@@ -1423,7 +1473,6 @@ function toAll(channel, payload) {
 }
 llama.onStatus((state) => toAll('llama:status', state));
 aiTools.onStatus((state) => toAll('aitools:status', state));
-sharedClipboard.setBlockedNotice(() => toAll('clipboard:locked'));
 
 // A new version of the pages (lib/live-update.js). Styles change at once in every window; for page
 // code, each window reloads itself when nobody's using it, with its tabs. The window kept ready for
@@ -1484,7 +1533,8 @@ app.whenReady().then(() => {
   scheduleCleanup();
   editorGuest = editorApp.start({ files, partOfFile, editableFor: video.editableFor, stopCopy: video.cancel, exportFile: video.exportFile, saveExport: saveEditorExport, openLink: (url) => openLink(url).catch(() => {}) });
   obscuraGuest = obscuraApp.start({ downloadsDir: () => path.join(app.getPath('home'), 'Downloads') });
-  // shortcut: asks go to the main window (or the last one used); a project's AI tab dragged to another window isn't followed there.
+  obscuraApp.setDark(readSettings().prefs?.darkSites === true);
+  // shortcut: asks go to the main window (or the last one used); an AI's tab can't be moved to another window (canMove in app.js), so it is always there.
   aiBrowserApp = aiBrowser.start({
     hostWindow: () => [mainWindow, lastFocused, ...BrowserWindow.getAllWindows()].find((win) => win && !win.isDestroyed()),
     reach: ports.reach,
@@ -1552,7 +1602,6 @@ app.whenReady().then(() => {
       const ours = message.ours === true;
       windowsClipboardCount = ours ? 0 : Number(message.files) || 0;
       windowsPicture = !ours && message.image === true;
-      if (windowsPicture) judgeSnip(); else snipOfStation = Promise.resolve(false);
       sharedClipboard.windowsChanged(message);
       passed = { type: 'clipboard', files: windowsClipboardCount, image: windowsPicture, ours };
     }

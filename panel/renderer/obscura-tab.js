@@ -39,7 +39,8 @@ function openInObscura(url) {
   return openObscura(asked ? asked.url : null);
 }
 
-function openObscura(url = null) {
+// background: an AI's tab opens behind the tab the owner is on and takes nothing from it.
+function openObscura(url = null, background = false) {
   const tab = { kind: 'obscura', returnTo: state.active, host: el('div', 'doc-host ob-host'), url: url || '', zoom: 1, loading: false };
   const button = (name, title, label) => {
     const node = el('button', 'tool ob-btn');
@@ -77,9 +78,17 @@ function openObscura(url = null) {
   const aiStop = el('button', 'ob-ai-stop', 'Stop');
   aiStop.type = 'button';
   aiStop.title = 'Take this page back from the AI';
+  // A pill over the top middle of the page (in the stage below), with a sparkle, who is working and Stop.
   const aiBanner = el('div', 'ob-ai-banner');
   const aiBannerText = el('span', 'ob-ai-banner-text');
-  aiBanner.append(el('span', 'ob-ai-pulse'), aiBannerText, el('span', 'ob-ai-spacer'), aiStop);
+  const sparkle = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  sparkle.setAttribute('viewBox', '0 0 24 24');
+  sparkle.setAttribute('class', 'ob-ai-sparkle');
+  const sparkPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  sparkPath.setAttribute('d', 'M12 2C12.6 7.5 16.5 11.4 22 12C16.5 12.6 12.6 16.5 12 22C11.4 16.5 7.5 12.6 2 12C7.5 11.4 11.4 7.5 12 2Z');
+  sparkPath.setAttribute('fill', 'currentColor');
+  sparkle.append(sparkPath);
+  aiBanner.append(sparkle, aiBannerText, aiStop);
   aiBanner.hidden = true;
   aiStop.hidden = true;
   // The page's zoom, in the room the project used to take.
@@ -90,15 +99,17 @@ function openObscura(url = null) {
   zoomText.title = 'Back to 100% (Ctrl 0)';
   const zoomBox = el('div', 'ob-zoom');
   zoomBox.append(zoomOut, zoomText, zoomIn);
-  // Only in a split view (a browser tab dragged onto another's page): back to two tabs.
+  // Only while paired (a tab beside this one, app.js): back to two tabs.
   const unsplit = button('panel_right_contract', 'Separate into two tabs');
   unsplit.hidden = true;
+  // Whether websites see a light or a dark look (one setting for every browser tab and window).
+  const dark = button('weather_moon', 'Websites: Light');
   const marks = button('bookmarks', 'Bookmarks');
   const past = button('history', 'History (Ctrl+H)');
   const newTab = button('tab_add', 'New browser tab (Ctrl+T)');
-  for (const extra of [marks, past, newTab]) extra.classList.add('ob-extra'); // hidden in a narrow page (style.css)
+  for (const extra of [dark, marks, past, newTab]) extra.classList.add('ob-extra'); // hidden in a narrow page (style.css)
   const bar = el('div', 'ob-bar');
-  bar.append(back, forward, reload, field, marks, past, newTab, zoomBox, unsplit);
+  bar.append(back, forward, reload, field, dark, marks, past, newTab, zoomBox, unsplit);
   const progress = el('div', 'ob-load');
   progress.hidden = true;
   const note = el('div', 'ob-note');
@@ -140,14 +151,13 @@ function openObscura(url = null) {
   aiRing.hidden = true;
   const aiGlow = el('div', 'ob-ai-glow');
   aiGlow.hidden = true;
-  stage.append(view, message, aiGlow, aiRing, aiDot);
-  // The strip says an AI is at work; it takes its own row above the page, so it never covers the page.
-  tab.host.append(bar, progress, aiBanner, note, findBar, stage);
+  stage.append(view, message, aiGlow, aiBanner, aiRing, aiDot);
+  tab.host.append(bar, progress, note, findBar, stage);
   tab.host.hidden = true;
   tab.view = view;
   tab.input = input;
   tab.field = field;
-  Object.assign(tab, { star, marks, past, project, agent, aiStop, aiBanner, aiBannerText, aiDot, aiName, aiRing, aiGlow, zoomText, unsplit, back, forward, reload, lock, progress, note, findBar, findInput, findCount, message });
+  Object.assign(tab, { dark, star, marks, past, project, agent, aiStop, aiBanner, aiBannerText, aiDot, aiName, aiRing, aiGlow, zoomText, unsplit, back, forward, reload, lock, progress, note, findBar, findInput, findCount, message });
   docArea.append(tab.host);
 
   showObscuraStart(tab);
@@ -156,17 +166,31 @@ function openObscura(url = null) {
   zoomOut.addEventListener('click', () => zoomObscura(tab, -1));
   zoomIn.addEventListener('click', () => zoomObscura(tab, 1));
   zoomText.addEventListener('click', () => zoomObscura(tab, 0));
-  unsplit.addEventListener('click', () => separateObscura(tab));
+  unsplit.addEventListener('click', () => separateTabs(tab));
+  dark.addEventListener('click', () => call('obscuraDark', !prefs.darkSites).catch(() => {}));
+  showObscuraDark(tab);
   star.addEventListener('click', () => toggleBookmark(tab));
   marks.addEventListener('click', () => showObscuraList(tab, 'bookmarks'));
   past.addEventListener('click', () => showObscuraList(tab, 'history'));
   newTab.addEventListener('click', () => openObscura());
   addTabElement(tab, 'New tab');
+  tab.aiTabDot = tab.el.querySelector('.tab-ai-dot');
   state.tabs.push(tab);
   renderTabButtons();
-  activateTab(tab);
+  if (!background) activateTab(tab);
   return tab;
 }
+
+// The dark-look button says what websites see now, and the moon is lit while they see dark.
+function showObscuraDark(tab) {
+  tab.dark.title = prefs.darkSites ? 'Websites: Dark' : 'Websites: Light';
+  tab.dark.setAttribute('aria-label', tab.dark.title);
+  tab.dark.classList.toggle('on', prefs.darkSites);
+}
+window.house.on('obscura:dark', (on) => {
+  prefs.darkSites = on === true;
+  state.tabs.filter((tab) => tab.kind === 'obscura').forEach(showObscuraDark);
+});
 
 // What the info area on the right says. Other features fill it: { project: 'Name', agent: 'Claude' }.
 // No project: "Not tied to a project". No agent: its chip stays hidden.
@@ -179,15 +203,17 @@ function setObscuraInfo(info = {}, tab = state.active) {
   tab.field.title = info.project ? `Tied to ${info.project}` : '';
 }
 
-// The banner over the page while an AI is at work; it goes by itself a few seconds after the AI's
-// last move, and comes back with the next one.
+// The pill and glow over the page while an AI is at work; they go by themselves a few seconds after
+// the AI's last move (the same moment as the orange dot on the tab), and come back with the next one.
 function aiAtWork(tab, agent, doing) {
   if (!tab.aiOf) return;
   if (agent) { tab.aiBase = agent; tab.aiName.textContent = agent.replace(/ is using this page$/, ''); }
-  tab.aiBannerText.textContent = doing ? `${tab.aiBase || 'An AI is using this page'}: ${doing}` : (tab.aiBase || 'An AI is using this page');
+  const who = tab.aiName.textContent.replace(/^An AI$/, '') || 'AI';
+  tab.aiBannerText.textContent = `${who} is working here${doing ? ` · ${doing}` : ''}`;
   tab.aiBanner.hidden = false;
   tab.aiStop.hidden = false;
   tab.aiGlow.hidden = false;
+  tab.aiTabDot.hidden = false;
   clearTimeout(tab.aiBannerTimer);
   tab.aiBannerTimer = setTimeout(() => aiResting(tab), 7000);
 }
@@ -195,6 +221,7 @@ function aiAtWork(tab, agent, doing) {
 function aiResting(tab) {
   tab.aiBanner.hidden = true;
   tab.aiGlow.hidden = true;
+  tab.aiTabDot.hidden = true;
   tab.aiDot.hidden = true;
   tab.aiRing.hidden = true;
   tab.aiAt = null;
@@ -727,49 +754,6 @@ window.house.on('obscura:event', (event) => {
   }
 });
 
-// Split view: a browser tab dragged onto another browser's page (renderer/app.js, the tab drag) joins
-// it, on the side it was dropped: one tab on the strip, two pages side by side. Separate (the button
-// in either page's bar, or the tab's right-click menu) gives two tabs again.
-function mergeObscuraTabs(dragged, target, side) {
-  if (!dragged || !target || dragged === target || dragged.splitWith || target.splitWith || dragged.kind !== 'obscura' || target.kind !== 'obscura') return false;
-  dragged.splitWith = target;
-  target.splitWith = dragged;
-  dragged.mergedInto = target; // its place on the strip goes; the target's tab stands for both
-  dragged.el.style.display = 'none';
-  const left = side === 'left';
-  dragged.host.style.order = left ? '0' : '1';
-  target.host.style.order = left ? '1' : '0';
-  dragged.unsplit.hidden = false;
-  target.unsplit.hidden = false;
-  activateTab(target);
-  return true;
-}
-function separateObscura(tab) {
-  const other = tab.splitWith;
-  if (!other) return;
-  const shown = tab.mergedInto ? tab.mergedInto : tab;
-  for (const one of [tab, other]) {
-    one.splitWith = null;
-    one.mergedInto = null;
-    one.el.style.display = '';
-    one.host.style.order = '';
-    one.unsplit.hidden = true;
-  }
-  activateTab(shown === tab ? tab : shown);
-}
-// Closing one half leaves the other whole, as a tab of its own.
-function endObscuraSplit(tab) {
-  const other = tab.splitWith;
-  if (!other) return;
-  tab.splitWith = null;
-  tab.mergedInto = null;
-  other.splitWith = null;
-  other.mergedInto = null;
-  other.el.style.display = '';
-  other.host.style.order = '';
-  other.unsplit.hidden = true;
-}
-
 // A project's Preview page (preview.js asks, main.js sends it once the site is up): one Obscura tab
 // per project, tied to it in the bar. Asked again, that tab comes to the front and loads the page again.
 function showPreviewPage(url, project, label = project) {
@@ -804,15 +788,27 @@ window.house.on('preview:open', (event) => {
 
 /* ---------- An AI using the browser (lib/ai-browser.js) ---------- */
 
-// Each project's AI gets one tab of its own, marked "Claude is using this page", with Stop.
-const aiBrowserTab = (project) => state.tabs.find((tab) => tab.kind === 'obscura' && tab.aiOf === project && !tab.closed);
+// Each AI session (a project and a terminal tab in its room) gets one tab of its own, marked "Claude
+// is using this page", with Stop. It opens behind the tab the owner is on and never comes forward by itself.
+const aiBrowserTab = (project, session) => state.tabs.find((tab) => tab.kind === 'obscura' && tab.aiOf === project && tab.aiSession === session && !tab.closed);
 
-window.house.on('aibrowser:tab', async ({ ask, project, agent, open }) => {
-  let tab = aiBrowserTab(project);
+// A tab that belongs to an AI session: kept drawn out of sight while it isn't in front, so its page works
+// (style.css), and unable to take the keyboard (app.js clears this when the owner opens the tab). It
+// can't be moved to another window. Also used when a reload hands it back (app.js addMovedTab).
+function markAiTab(tab, project, session) {
+  tab.aiOf = project;
+  tab.aiSession = session;
+  tab.host.classList.add('ai-live');
+  tab.host.inert = true;
+  renderTabButtons();
+}
+
+window.house.on('aibrowser:tab', async ({ ask, project, session = '', agent, open }) => {
+  let tab = aiBrowserTab(project, session);
   if (!tab && open) {
-    tab = openObscura();
-    tab.aiOf = project;
-  } else if (tab && open && state.active !== tab) activateTab(tab);
+    tab = openObscura(null, true);
+    markAiTab(tab, project, session);
+  }
   if (tab) {
     setObscuraInfo({ project, agent: `${agent} is using this page` }, tab);
     tab.aiName.textContent = agent;
@@ -821,11 +817,17 @@ window.house.on('aibrowser:tab', async ({ ask, project, agent, open }) => {
       try { tab.wcId = tab.view.getWebContentsId(); } catch { await new Promise((resolve) => { setTimeout(resolve, 100); }); }
     }
   }
-  call('aiBrowserAnswer', ask, tab?.wcId ?? null);
+  const answered = call('aiBrowserAnswer', ask, tab?.wcId ?? null);
+  if (tab?.aiResume) {
+    const url = tab.aiResume;
+    tab.aiResume = null;
+    await answered.catch(() => {}); // main has the tab in its address wall by now
+    goObscura(tab, url);
+  }
 });
 
-window.house.on('aibrowser:close', ({ ask, project }) => {
-  const tab = aiBrowserTab(project);
+window.house.on('aibrowser:close', ({ ask, project, session = '' }) => {
+  const tab = aiBrowserTab(project, session);
   if (tab) closeTab(tab);
   call('aiBrowserAnswer', ask, true);
 });
@@ -834,13 +836,16 @@ window.house.on('aibrowser:close', ({ ask, project }) => {
 function stopAiBrowser(tab) {
   const project = tab.aiOf;
   if (!project) return;
+  const session = tab.aiSession;
   tab.aiOf = null;
+  tab.host.classList.remove('ai-live');
+  renderTabButtons();
   clearTimeout(tab.aiBannerTimer);
   aiResting(tab);
   tab.aiStop.hidden = true;
   setObscuraInfo({ project }, tab);
   try { tab.view.stop(); } catch { /* not ready */ } // whatever it was loading stops too
-  call('aiBrowserStop', project).catch(() => {});
+  call('aiBrowserStop', project, session).catch(() => {});
   obscuraNote(tab, 'You have this page back. The AI has to ask you before it uses the browser again.');
 }
 
@@ -886,7 +891,6 @@ function closeObscura(tab) {
   tab.closed = true;
   clearTimeout(tab.noteTimer);
   clearTimeout(tab.aiBannerTimer);
-  endObscuraSplit(tab);
   tab.host.remove();
 }
 
@@ -897,7 +901,7 @@ function obscuraDescription(tab) {
     const now = tab.view.getURL();
     if (/^https?:\/\//i.test(now)) url = now;
   } catch { /* not loaded yet */ }
-  return { kind: 'obscura', url };
+  return { kind: 'obscura', url, ai: tab.aiOf ? { project: tab.aiOf, session: tab.aiSession || '' } : null }; // main only lets this through for a reload, never another window
 }
 
-window.houseTest = Object.assign(window.houseTest || {}, { aiAtWork, aiGlide, aiResting, mergeObscuraTabs, separateObscura, zoomObscura, hostZoom, pageScale: () => pageScale, openInObscura, openObscura, obscuraAddress, setObscuraInfo, stopAiBrowser, rememberObscuraVisit, toggleBookmark, showObscuraList, bookmarks: () => obscuraBookmarks, history: () => obscuraHistory, ready: () => obscuraSitesReady() });
+window.houseTest = Object.assign(window.houseTest || {}, { aiAtWork, aiGlide, aiResting, zoomObscura, hostZoom, pageScale: () => pageScale, openInObscura, openObscura, obscuraAddress, setObscuraInfo, stopAiBrowser, rememberObscuraVisit, toggleBookmark, showObscuraList, bookmarks: () => obscuraBookmarks, history: () => obscuraHistory, ready: () => obscuraSitesReady() });

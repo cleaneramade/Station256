@@ -43,8 +43,9 @@ time (`flock /tmp/station-shot-slot-1.lock ...`).
 - `auditDocs` — Markdown tables, edit, save, reopen; `.txt`; `.json`
 - `auditSong` — MP3, FLAC and M4A read back with ffprobe; odd Track and Year input
 - `auditPicture` — turn, crop, Undo, save; video trim
+- `obscuraIdentity` — a local https page sees the same Chrome-on-Linux in headers (User-Agent, Sec-CH-UA, platform, full version list), JS (userAgent, brands, high-entropy values, `window.chrome`) and no "Electron", with dark sites on and off, after navigating and reloading
 - `auditBrowser` — start page, search, Back/Forward, Find, failed pages, no "Obscura" wording
-- `node panel/test/snip-match.test.js` — a snip of Station is recognised, anything else is not
+- `node panel/test/clipboard-lock.test.js` — while locked, text and files still go to Windows, text from Windows still comes in, nothing is ever cleared, Cut never offers C: files (stubs the clipboard)
 - `node panel/test/ai-tools.test.js` — your AI tools choice is saved in a fixed order, an unknown name is refused, and the room blueprint installs only what is chosen
 - `searchInside` also covers "Words inside files": finds words in text files, skips binary, hidden, node_modules and key files, treats shell characters as plain text
 - `auditActions` — New, Rename, Delete, Undo, Trash restore, Properties, Zip/Extract, search
@@ -52,11 +53,34 @@ time (`flock /tmp/station-shot-slot-1.lock ...`).
 
 Also (2026-11-11, later):
 
+- `tabSplit` — dragging a tab onto the page to split, with real mouse input
+- `filesSplit` — two Files tabs side by side: pair by drag, the toolbar, keys, search and address bar acting on the front half, moving files between halves, Ctrl+R, Separate
+  (`stub`): a terminal onto Home in front, onto a terminal, onto a browser (the
+  half lights up, the front tab never changes, the pair has the right sides and
+  both pages are drawn side by side), Files onto Files shows no half, a terminal
+  carried to another window's page (that window's half lights up through a
+  stand-in cursor, and the tab arrives paired); then 20 tabs at 135% and at 100%
+  and 40 at 135%: nothing half-clipped, the open tab keeps its icon and X, + is
+  in view. The first mouse input into a never-touched hidden page is lost, so
+  the scene moves first and waits.
+- `snapLayouts` — tabs side by side and windows side by side (`stub`): a terminal
+  and a browser page shown at once in one row, the divider dragged with the mouse
+  (both widths change, 240px least), double-click resets, clicking a half makes it
+  active, Separate, closing one half, two browser pages, an AI's background tab
+  paired with a terminal (its page still answers), the pair kept across the page
+  starting again, and Arrange Windows Side by Side with two windows. A hidden
+  window never fires a ResizeObserver, so it checks drawn boxes, not that a
+  terminal refits.
 - `aiBrowser` — an AI using the Web Browser through the real `room/station-browser`
   tool: open, read, type, choose, click, back, scroll, shot, close; the walls
   (other sites on this PC, the home network, file:, a page redirecting there,
   the owner's own tab, a planted link and an old request in the request folder,
-  5 a second, Internet Allow/Block/Ask, Stop and asking again). Needs
+  5 a second, Internet Allow/Block/Ask, Stop and asking again), the control
+  overlay (pill, glow, Stop, goes after a rest, no motion but opacity), and the
+  second-version tool on a made-up order form: snapshot and `-i` with refs,
+  fill, select, check, hover, dblclick, press combos (and refused ones), find,
+  get, scrollinto, wait (and its 15 s cap), a password box refused, Stop cutting
+  a wait short, and old and new Station/tool pairs. Needs
   `SHOT_PATH=$PWD/panel/test/stub-preview`.
 - `uxIdeas` — Insert table, a `.gguf` opened from Files picks it in Local AI,
   closing Local AI unloads the model, search starts with every folder inside.

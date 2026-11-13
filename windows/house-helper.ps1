@@ -64,6 +64,55 @@ function Test-HouseRunning {
     (Invoke-Wsl '--list --running' 30).Output -match ('(?m)^\s*' + [regex]::Escape($houseDistro) + '\b')
 }
 
+# The owner's Claude skills and helper agents on Windows go into the house's ~/.claude, where every
+# room picks them up (bin/room, room/room-start). Newer files only, nothing is ever deleted
+# (no /MIR or /PURGE). synced is Anthropic's built-ins and graphify is installed by the rooms.
+# Robocopy's exit codes 0 to 7 mean it worked. A failure here must never stop the helper.
+function Sync-ClaudeSkills([string]$from, [string]$to) {
+    try {
+        $junk = @('/XO', '/XF', '*.bak', '/XD', 'node_modules', '.git', '/R:1', '/W:1', '/NJH', '/NJS', '/NP', '/NFL', '/NDL')
+        if (Test-Path "$from\skills") {
+            foreach ($skill in Get-ChildItem "$from\skills" -Directory | Where-Object { $_.Name -notin 'synced', 'graphify' }) {
+                [void](robocopy $skill.FullName "$to\skills\$($skill.Name)" /E @junk)
+            }
+        }
+        if (Test-Path "$from\agents") { [void](robocopy "$from\agents" "$to\agents" '*.md' @junk) }
+    } catch { }
+}
+
+# The cursor files Windows is using now go into the house, where panel/make-cursor-theme.py turns
+# them into the pointer Station shows, so it matches the rest of Windows. They are Microsoft's
+# files: copied on this PC, never shipped. Newer files only, nothing is deleted. A role with no
+# file in the registry uses Windows' own built-in shape, so the plain Windows file stands in.
+# A failure here must never stop the helper.
+function Sync-WindowsCursors([string]$to) {
+    try {
+        $default = [ordered]@{
+            Arrow = 'aero_arrow.cur'; Hand = 'aero_link.cur'; IBeam = 'beam_r.cur'; SizeWE = 'aero_ew.cur'
+            SizeNS = 'aero_ns.cur'; SizeNWSE = 'aero_nwse.cur'; SizeNESW = 'aero_nesw.cur'; SizeAll = 'aero_move.cur'
+            Crosshair = 'cross_r.cur'; Wait = 'aero_busy.ani'; AppStarting = 'aero_working.ani'; No = 'aero_unavail.cur'
+            Help = 'aero_helpsel.cur'
+        }
+        $key = Get-ItemProperty 'HKCU:\Control Panel\Cursors'
+        $roles = [ordered]@{}
+        [System.IO.Directory]::CreateDirectory($to) | Out-Null
+        foreach ($role in $default.Keys) {
+            $file = [Environment]::ExpandEnvironmentVariables([string]$key.$role)
+            if (-not ($file -match '\.(cur|ani)$' -and (Test-Path $file))) { $file = "$env:SystemRoot\Cursors\$($default[$role])" }
+            $name = Split-Path $file -Leaf  # shortcut: two custom cursors with the same file name in different folders would clash
+            $copy = "$to\$name"
+            if (-not (Test-Path $copy) -or (Get-Item $file).LastWriteTimeUtc -gt (Get-Item $copy).LastWriteTimeUtc) { Copy-Item $file $copy -Force }
+            $roles[$role] = $name
+        }
+        $size = 32
+        if ($key.CursorBaseSize -is [int]) { $size = $key.CursorBaseSize }
+        $json = [ordered]@{ baseSize = $size; roles = $roles } | ConvertTo-Json -Compress
+        if (-not (Test-Path "$to\cursors.json") -or [System.IO.File]::ReadAllText("$to\cursors.json") -ne $json) {
+            [System.IO.File]::WriteAllText("$to\cursors.json", $json, $utf8)
+        }
+    } catch { }
+}
+
 function Set-StayAwake([bool]$on) {
     if ($on) { [void][LinuxHouse.Power]::SetThreadExecutionState($ES_CONTINUOUS -bor $ES_SYSTEM_REQUIRED) }
     else { [void][LinuxHouse.Power]::SetThreadExecutionState($ES_CONTINUOUS) }
@@ -102,6 +151,7 @@ function Invoke-Resize([string]$raw) {
 
 $checksAsleep = 0
 $wasKeeping = $null
+$skillsSynced = $false
 while ($true) {
     try {
         if (Test-HouseRunning) {
@@ -116,6 +166,13 @@ while ($true) {
                 $file = [System.IO.File]::Open("$state\windows.json", 'OpenOrCreate', 'Write', 'ReadWrite')
                 try { $file.Write($bytes, 0, $bytes.Length); $file.SetLength($bytes.Length) } finally { $file.Close() }
             } catch { }
+
+            # Once per helper start, while the house is awake.
+            if (-not $skillsSynced) {
+                $skillsSynced = $true
+                Sync-ClaudeSkills "$env:USERPROFILE\.claude" "$house\home\$houseUser\.claude"
+                Sync-WindowsCursors "$house\home\$houseUser\.local\share\station-256\windows-cursors"
+            }
 
             # Open rooms and running jobs keep the PC awake. Just leaving the panel open doesn't.
             $keep = $true

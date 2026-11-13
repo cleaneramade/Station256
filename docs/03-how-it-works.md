@@ -80,6 +80,11 @@ and the System panel (2026-11-09, `.main` is a grid; `footerBeside` scene).
 In the icon views each tile is as tall as its own name, with as much space under
 the name as over the picture (`tileBalance` scene measures it in pixels).
 
+Each folder remembers its own view and sort, as File Explorer does (`prefs.folderViews`
+in settings, newest last, 500 at most). A split keeps one view and sort per half. A folder
+never changed uses its usual look: Pictures and Videos large icons, the rest Details,
+name A to Z. Subfolders do not inherit. `folderViews` scene.
+
 Fonts and icons are chosen so a public release stays legal: bundled **Selawik**
 (open Segoe lookalike) and **Fluent** icons (MIT), copied by
 `panel/setup-icons.sh`. Real Segoe UI files were copied to
@@ -534,7 +539,8 @@ never left out. What belongs to the thing clicked comes after a line.
 - The menu keeps the typing spot where it was (its `mousedown` is cancelled),
   so the four act on the box you right-clicked.
 - Own items: tabs (New Tab, Move to New Window, Close Tab, plus Export Chat
-  and Close Room on terminals), sidebar places (Open, Open in New Tab, Copy
+  and Close Room on terminals, Show on the Left / Show on the Right or Separate,
+  and Arrange Windows Side by Side with more than one window), sidebar places (Open, Open in New Tab, Copy
   as Path, Properties), Local AI messages (Copy Message), projects (Preview).
 - **Web Browser pages:** the page's right-click (`context-menu` in
   `lib/obscura.js`) is passed to the tab, which draws Station's menu: the four
@@ -574,19 +580,30 @@ Checked by `fitrun.sh` (its worst case now includes Preview): 7/7.
 
 ### Lock and the clipboard (2026-11-12)
 
-Lock on: nothing is copied between Linux and Windows in either direction;
-Linux to Linux and Windows to Windows are untouched. Copying in Station while
-locked stays in Station (a note says it's locked, and the Windows helper clears
-the copy if it reached Windows). Text, files and pictures copied in Windows are
-refused on paste, with a note and an Unlock button. The one exception is a
-**snip of Station itself** (Win + Shift + S on Station): when a picture appears
-in Windows' clipboard while locked, `lib/snip-match.js` compares it with a
-fresh picture of Station's own windows (a snip of Station shows only what
-Station already shows). Measured on the real screen: Windows shows Station
-1:1, a snip of Station matched with a difference of 0.0 and a snip of another
-app scored 54, so only an exact-size piece with a difference of 4 or less
-counts. If Windows ever draws Station larger, snips of Station are refused with
-the note: the safe way to fail. Unit check: `test/snip-match.test.js`.
+The clipboard always crosses between Linux and Windows, locked or not (owner's
+decision, 2026-11-12: the clipboard belongs to Windows). The lock is only about
+the C: drive (the sidebar view, `/windows` in rooms) and dragging files in from
+Windows. It changes nothing here:
+
+- Text copied in Station goes on Windows' clipboard, and text copied in
+  Windows comes in.
+- Files copied in Station go on Windows' clipboard (Cut never takes anything
+  from C:). Files copied in File Explorer paste into Station, and a picture
+  copied in Windows (a screen snip) pastes into a terminal or as a picture file
+  in a Files tab. Pasting is the owner's own act, and it only brings in the
+  files named.
+- Nothing asks Windows to clear its clipboard any more. The helper still
+  knows `clipboard-clear`, but the panel never sends it.
+- The WSLg safety stays: Windows is told 500 ms after a copy, only for the
+  newest one, and the helper's debounce and FromLinux check are unchanged.
+- If the Windows helper isn't linked, a text copy stays in Station and a note
+  says so once ("Copied here. Windows can't paste it until the Windows helper is
+  back."), again only after the helper has been away again. Files have the same
+  kind of note.
+- The old "snip of Station itself" check (`lib/snip-match.js`) is gone: nothing
+  is refused any more, so there is nothing to tell apart.
+
+Unit check: `node panel/test/clipboard-lock.test.js`.
 
 ### Web Browser, the built-in browser (2026-11-10)
 
@@ -602,9 +619,10 @@ are kept in the settings (`prefs.bookmarks`, `prefs.history`: newest first, 300
 and 400 at most), on this computer only. History leaves out local addresses and
 AI or Preview pages. A new tab's start page has a search box, the bookmarks (or
 the most visited sites until there are some) and the last pages visited.
-Links never open Windows' browser. An AI at work shows as a strip above the
-page, a glow round it and its own named cursor (`lib/ai-browser.js` waits for
-the cursor before it clicks). Station's sidebar, folder header and status bar
+Links never open Windows' browser. An AI at work shows as an orange glowing
+edge round the page, a pill at the top middle ("Claude is working here", a
+sparkle and Stop) and its own named cursor (`lib/ai-browser.js` waits for the
+cursor before it clicks). Station's sidebar, folder header and status bar
 are hidden while it's in front, and come back exactly as they were.
 
 - The page is a `<webview>` in its own session (`persist:obscura`), with no
@@ -614,11 +632,37 @@ are hidden while it's in front, and come back exactly as they were.
   downloads every 10 s, 3 new tabs every 5 s, and 20 page-opened tabs in all.
 - Ctrl+T opens a new browser tab, Ctrl+W closes the tab. Ctrl+plus zooms the
   page, not Station.
+- **Websites: Light / Websites: Dark** (a moon button in the bar, one setting for
+  every browser tab and window, off by default, kept in `panel.json` as
+  `prefs.darkSites`). On, sites that follow `prefers-color-scheme` show dark, so
+  they look the same as in the owner's Windows browser (Edge is set to dark).
+  Done in main (`lib/obscura.js` `setDark`, call `obscuraDark`): each browser
+  page's own debugger runs `Emulation.setEmulatedMedia`, set again at each
+  `dom-ready`; an AI's tab is the same kind of page, so it follows. Only these
+  pages: `nativeTheme` is global and would change Station's own pages, so it is
+  not used. Limits: a page whose debugger is taken by someone else keeps its
+  look (nothing else attaches today, and the tab offers no Inspect); the button
+  hides in a narrow page with the other extras. Turn it on by hand:
+  `window.house.call('obscuraDark', true)` in Station's page, or set
+  `"darkSites": true` under `prefs` in `~/.config/house/panel.json`.
+- **One Chrome identity** (2026-11-13, fixes Google's "this browser may not be
+  secure"): every browser page says "Chrome <version> on Linux" everywhere.
+  `lib/obscura.js` `identify` attaches the page's debugger (the same one dark
+  sites uses; re-attached if let go) and sends `Emulation.setUserAgentOverride`
+  (user-agent, `navigator.userAgentData` brands and full list, platform stays
+  Linux) and `Page.addScriptToEvaluateOnNewDocument` (fills `window.chrome` with
+  `app`, `csi`, `loadTimes`, `runtime`; needs `Page.enable`). The session gets
+  the same user-agent. Electron sends no `Sec-CH-UA` headers at all, so
+  `onBeforeSendHeaders` adds them on https and localhost (full version list only
+  after a site asks with `Accept-CH`; no retry for `Critical-CH`). If the
+  debugger can't attach the page still loads, with Electron's own look. Checked
+  by the `obscuraIdentity` scene.
 - `lib/obscura.js`, `renderer/obscura-tab.js`. Checked by the `obscura` and
   `obscuraAttacks` scenes (every way out of the tab, tried against a hostile
   made-up site).
 - Not yet: the browser engine itself inside rooms (next version). Hiding from
-  websites' bot detection is deliberately not built.
+  websites' bot detection is deliberately not built (the identity above only
+  makes the browser say one consistent, true thing: Chrome's engine on Linux).
 
 #### An AI using the Web Browser (built 2026-11-11)
 
@@ -627,12 +671,38 @@ that project's own, the way a person does, while you watch. The owner chose on
 2026-11-11 that it uses the **signed-in** browser (the same `persist:obscura`
 session as your own tabs), so it can act as you on sites you're signed in to.
 
-- **How the AI asks.** `station-browser` in the room: `open ADDRESS`, `read`
-  (the page's words, plus its links, buttons and boxes, each with a number),
-  `click N`, `type N "words"` (`--enter` presses Enter after; on a choice it
-  picks that option), `key Enter` and a few other keys, `scroll down|up`,
-  `back`, `forward`, `reload`, `shot` (a picture the AI can open), `close`.
-  Every answer is the page again, so the AI sees what its action did.
+- **How the AI asks.** `station-browser` in the room (second version,
+  2026-11-13, modelled on vercel-labs/agent-browser, Apache-2.0: the ideas
+  only, the code is Station's own, in `lib/ai-browser-page.js`):
+  - `open ADDRESS`, then `snapshot` (alias `read`; `-i` lists only the parts
+    you can use): the page as a short tree (headings, landmarks, text, and
+    the parts you can use as `button "Go" [ref=e7] [checked]`). A ref
+    (`@e7`, or plain `7` as before) keeps its number for as long as that part
+    stays on the page, across snapshots; a part that is gone answers "not on
+    the page any more". Parts that only look clickable (tabindex, onclick, a
+    pointer cursor) are listed as `clickable`; a tick box hidden behind a
+    styled label is the label's part. A click with something on top of the
+    part (a pop-up, a cookie bar) is refused and says what is on top.
+  - `click`, `dblclick`, `hover`, `fill @e "words"` (clears, then types; same
+    as `type`; `--enter` presses Enter after; on a choice it picks that option),
+    `select @e "Option"`, `check`/`uncheck @e`, `press Enter` (alias `key`; also
+    Shift+ and Ctrl+ with arrows, Tab, Home, End, Backspace, and Ctrl+A/Z/Y:
+    nothing the browser itself answers to, and no bare letters),
+    `scroll down|up`, `scrollinto @e`.
+  - `find text "words"` and `find role button "Name"` (give refs, at most 20),
+    `get text|value @e`, `get url`, `get title`, `wait @e` / `wait "words"` /
+    `wait 2000` / `wait --load` (never longer than 15 s; Stop cuts it short).
+  - `back`, `forward`, `reload`, `shot` (a picture the AI can open), `close`.
+  - Left out on purpose, because they'd break the walls: running the page's
+    own JavaScript, cookies and storage, console and network capture, file
+    uploads, other tabs.
+  - Every answer is the page again (in short, `-i`, after a change to one box),
+    so the AI sees what its action did. The page is read by `install()` in
+    `lib/ai-browser-page.js`, run in Station's own world of the page (not
+    through the debugger, so it works when the debugger is detached too).
+  - Answers carry `v: 2`. A new tool with an older running Station says "this
+    Station 256 is older than this tool" for a command the old one can't do; an
+    older tool with the new Station is answered as before.
 - **The way in.** A room can't reach Station, so `bin/room` mounts a folder of
   the project's own: `~/.local/state/house/browser/ROOM/in` (the room writes a
   small request file there) and `.../out` (Station's answer; read-only in the
@@ -640,10 +710,27 @@ session as your own tabs), so it can act as you on sites you're signed in to.
   so rooms need no rebuild: a room gets it the next time it opens. The room
   note tells each AI about it. `lib/ai-browser.js` looks for requests 4 times a
   second.
-- **What you see.** The project's AI tab comes to the front when the AI opens a
-  page. Its bar says the project and "Claude is using this page", with a red
-  **Stop**. A blue dot shows where it clicks or types. Stop gives you the page
-  back; the AI then has to ask ("Claude wants the Web Browser again", Allow or
+- **What you see.** The AI's tab opens behind the tab you are on and never comes
+  to the front or takes the keyboard by itself; open it yourself when you want
+  to watch. Each AI (each terminal tab in the room, found from `HERDR_SOCKET_PATH`)
+  has its own tab and keeps using it until it closes it or you do, so several
+  AIs can work at once. While one is working, an orange pulsing dot shows on its
+  tab (the glowing edge and pill over its page come and go with the same
+  signal: a few seconds after the AI's last command they fade away, and Stop
+  removes them at once; the glow only pulses its opacity, and stands still for
+  reduced motion), before the move-to-window button (that button is hidden for an AI's tab:
+  its requests only reach the window that made it). A page starting again (Ctrl+R,
+  a new version) keeps it: `describeAll` carries its project and session
+  (`cleanTab(tab, true)` checks them), it comes back behind the owner's tabs,
+  still its AI's and still paired, and the AI's next command finds it again
+  (`tabFor` asks each time). A tab taken back with Stop comes back as the
+  owner's own. It never moves to another window. Its bar says the project
+  and "Claude is using this page"; the red **Stop** is in the pill over the
+  page. A pointer with the AI's name shows where it clicks or types. Stop gives
+  you the page back (that AI only) and also cuts a wait or a click that is under
+  way (`lib/ai-browser.js` checks after the pointer's glide, in a wait, and
+  before it answers); the tool gets "The user stopped you ...". The AI then has
+  to ask ("Claude wants the Web Browser again", Allow or
   Don't allow) before it can use the browser again.
 - **Walls.**
   - Only the tab this project's AI opened. Your own tabs are never touched,
@@ -818,6 +905,20 @@ A room is one container per project:
 - `claude-managed.json` mounted in as Claude's managed settings, so house rules
   apply inside the room
 
+### The owner's skills and agents in every room (2026-11-12)
+
+The house's `~/.claude/skills` and `~/.claude/agents` are the one source. On Windows,
+`house-helper.ps1` copies `%USERPROFILE%\.claude\skills\*` (not `synced`, not `graphify`) and
+`agents\*.md` into them once each time it starts, newer files only, never deleting. `bin/room`
+mounts both read-only at `/usr/local/share/station-256/claude/` when they are real folders.
+`room/room-start` copies them into the room's own `/home/dev/.claude` on every start (newer only,
+nothing deleted, so a skill made in the room stays). A copied skill that ships `scripts/install.js`
+gets it run with `--no-open`, but only while its hooks are missing from the room's
+`settings.json`, so repeat starts add no hooks and no backups. This is before `graphify install`,
+which still gives each room `/graphify`. The image label `house.sharedskills` makes `bin/room`
+rebuild an older blueprint once. A skill's own state (for Advisor Station, `~/.advisor-station`)
+lives in `/home/dev`, outside the volume, so it starts fresh when the room container is recreated.
+
 ### Claude sign-in in a room (2026-11-07)
 
 - **Shared key (default).** `room login` makes one long-lived key
@@ -874,7 +975,10 @@ The panel only holds a line to it (`room attach NAME TAB`).
     other rooms keep going. Others count even when no tab shows them, or one
     is still opening (`terminals.othersRunning`). If the room can't be asked,
     only that one terminal ends, never more. Only when it's the last one does
-    the whole room close, and the pop-up says so first.
+    the whole room close, and the pop-up says so first. Closing a room only
+    closes its terminals and their tabs: no other tab is moved (the old jump to
+    the project folder is gone), and a terminal tab is titled with just the
+    project name (`Name (2)` for the next).
   - **Close All Rooms** (top bar on the project's files, the project's
     right-click menu, the Agents page) stops the project's whole room and
     every terminal in it, as Close Room used to do everywhere.
@@ -986,7 +1090,8 @@ if only one tab"), so a window's last tab stays put.
     picture once it's on screen. The "own window" button does the same from the
     tab's place.
   - *Over another window's tabs* the picture shrinks to a tab (`chip`) so the gap
-    shows. A window carried by its lone tab fades away there (`html.docking`) and
+    shows. Over any Station window the carried picture is only a tab (icon and name), so the lit half stays visible; outside them all it grows into the window-shaped card, filled with a picture of the page taken at lift (`tabSnapshot`, main.js, given up after 50 ms) or a faint icon on the app background. Never a text dump. (Old wording:) a tab on a blank
+    page, never a text dump. A window carried by its lone tab fades away there (`html.docking`) and
     its tab's picture shows instead. Let go, the window that takes the tab comes
     to the front only after the tab has faded in (`LAND_MS`), and the lone tab's
     old window closes then too, so nothing vanishes at once. The tabs beside the
@@ -1005,6 +1110,64 @@ if only one tab"), so a window's last tab stays put.
   one tell the helper where it is (`connected`). Clipboard changes go to every
   window.
 - The old terminal-only pop-out (`term.html`, `term-window.js`) is gone.
+- **Tabs side by side (a pair).** Two tabs that have a page of their own (a
+  terminal, a browser page, a document, a video, a song) can share the tab area,
+  and so can a Files tab (Home, Projects, a folder) with any of those, or with
+  another Files tab: the Files section is the half (`pageOf`, `pair-l` /
+  `pair-r` on it). Agents, Rules, Schedules, Local AI and the video editor
+  don't pair. Both stay on the
+  strip; the one clicked is in front (`state.active`), its mate (`splitWith`)
+  shows beside it, on the side in `side`. Made by dragging a tab over the page
+  area and letting go on its left or right half (`snapZones`, a filled blue
+  half, no outline). The partner is the tab that was in front when the drag
+  began (picked up, it is put back in front once the tab lifts, and never
+  changes mid-drag); if the dragged tab was itself in front, the tab used
+  before it. Over another window's page (not its tabs) that window lights the
+  half too (main.js `showHalf` sends `tab:half`, the page answers `tabHalfIs`),
+  and a drop there sends the tab with `side`, so it arrives paired with that
+  window's tab in front (`tab:arrive`). Or by
+  right-clicking a tab that is not in front: Show on the Left / Show on the
+  Right (it joins the tab in front). `Separate` in the menu, or the button in a
+  browser page's bar, gives two tabs again; closing one half leaves the other
+  alone. Nothing is moved in the page: `layoutPair` (`app.js`) only puts
+  `pair-l` / `pair-r` on the two hosts and `pair` / `pair-x` on `.main`, and
+  `style.css` does the sizing (`--pair` = the left half's share, in percent). A
+  terminal beside a page are two sections, so each section gets its share
+  (`pair-x`); two pages of one kind share their section's row. A browser's
+  `<webview>` is never moved in the page, because that would reload it. The
+  divider (`.pair-grip`, dragged with `houseFrame.track` like the sidebar's
+  grip) is a 1px border, keeps 240px for each half, and goes back to half and
+  half on a double-click. An AI's background browser tab can be one half
+  (`.ai-live` only applies while its host is hidden). A pair is carried through
+  Ctrl+R and live reloads (`describeAll` -> `liveReload` -> `cleanPair`, found
+  again by a shared number in `start`); a tab leaving for another window
+  separates first (`removeTab`). Not yet seen on a real screen: the
+  terminal refitting (its ResizeObserver, which a hidden window never fires).
+- **Two Files halves.** The Files section exists twice (`views` in `app.js`):
+  the one in the page and a copy made the first time two Files tabs pair, from
+  the page as it started (`otherView`; the page's own listeners on it are
+  recorded while it starts and put on the copy, the column headings are wired
+  again by `wireColumns`). One view is *bound* (`bindView`): `filesView`,
+  `rowsEl`, `columnsEl`, `homeView`, `columnDrop`, the element ids (`rows`,
+  `columns`... get `-b` on the other) and `state.entries` / `selected` /
+  `anchor` / `focus` / `search` are the bound one's, so everything written for one
+  Files view works on the half in front. Pressing or tabbing into a half makes
+  its tab the front one (`halfEntered`), which binds its view, so the toolbar,
+  address bar, search box and keys always act on the half last clicked.
+  `loadFolder(tab)` draws a tab on its own view (`withView`) and, unless told
+  `alone`, its mate too, so a move, paste or delete shows in both halves.
+  `renderChrome` leaves the toolbar alone for the half not in front. The front
+  half has a blue line along its top and the other's picks are gray
+  (`half-on` / `half-off`). A drag (`dropTargetAt`) can end in either half: on a
+  folder in it or its empty space, with the same Windows-drive, name-clash and
+  Ctrl-copies rules. Home and the Windows (C:) view work as before. Left over:
+  the "From GitHub" bar belongs to the first section only. Test: `filesSplit`.
+- **Arrange Windows Side by Side** (tab menu, with more than one window): main
+  (`arrangeWindows`) tells each real window (the one asked from first, never
+  the spare) its number and the count; each page places itself with `placeIn`
+  (`window-motion.js` `arrange`): two windows take halves, three take the left
+  half and two quarters, four take quarters; more share the quarters; a layout
+  that does not `fits()` gives way to the next. Nothing on the Windows side.
 - Checked (2026-11-09): the `windows` scene in `test/shots.js` (34 checks, never
   on screen, with a stand-in pointer: `test/shotrun.sh windows`; it closes the
   main window at the end, so run it alone), `tabGhost` (pictures of each shape),
@@ -1101,13 +1264,39 @@ Gotchas:
 
 | Wall | Default | Enforced by |
 |---|---|---|
-| Windows door | Block | `house-rules door-open` / `door-close`, read-only drvfs at `/mnt/windows-door`, `/windows` in rooms; relocks on house restart |
+| Windows door | Block | `house-rules door-open` / `door-close`, read-only drvfs at `/mnt/windows-door`, `/windows` in rooms (taken away from running rooms on lock, rooms stay open); relocks on house restart |
 | Other projects | Block | read-only `/projects` mount |
 | Your folders | Block | Documents, Pictures, Music, Videos, Downloads mounted at `/home/dev/<name>`, read-only on Read only |
 
 When the Windows door is unlocked it is **read-only for AI** — never change or
 delete anything on the Windows side. The explorer's Windows (C:) drive is the
 same door, view and copy only (see "Windows (C:) in the sidebar").
+
+**Locking never closes a room** (2026-11-12). A running room holds its own copy
+of the drive mount, so unmounting C: on the house doesn't reach it. `house-rules
+door-close` removes the flag, then for every container labelled `house.door=open`
+unmounts `/windows` inside that room (a small host-side Python call that enters the
+room's mount namespace and does a plain umount2, never lazy; `umount -N` can't be
+used, it fails because /proc is the room's own there; nothing from the room runs), then
+unmounts C:, then checks the rooms again. The room keeps running; `/windows`
+becomes an empty folder at once. Rooms it cut are listed in
+`/run/house/windows-door-cut` so the app doesn't say they can still see Windows
+files. If something in a room has a file open in `/windows` (or a shell has
+`cd`'d into it), umount says busy: the script names the room, exits non-zero
+**before** unmounting C:, puts the flag back, and the lock keeps showing open (it
+also counts C: still being mounted as open) until that program lets go. If C:
+itself is busy on the Linux side (a terminal started from Windows sitting in a
+Windows folder) it says so in one plain sentence, exits non-zero and puts the flag
+back too; a lazy unmount would
+hide the folder but leave the lock lying. Nothing is killed. A cut room gets
+`/windows` back only by closing and opening it again while unlocked. Rooms opened
+while locked never had it. Unlocking doesn't reach running rooms. Why not mount
+propagation (reasoning from the kernel's shared-subtree rules, not tested): `/`
+is a private mount here, so the parent folder would need its own shared mount
+set up by house-rules; C: would then sit on a subfolder, and a room that binds
+that subfolder while unlocked gets a copy of C: itself (Docker resolves the path
+to the top mount), which an unmount on the house side does not reach. Giving
+`/windows` the same path as today would need that and more per-room setup.
 
 Walls are set when a room opens. Changing one on the House Rules page while
 rooms are open shows a note: those rooms get it the next time they open.
@@ -1261,6 +1450,31 @@ top. Three parts of `snap-link.cs` make that hold:
 Only the helper changed, so it needed a helper restart, not a Station restart.
 Not yet proven on the real screen: a test that raised Station from another
 process couldn't move it at all, so the user's own clicking is the check.
+
+## The mouse pointer matches Windows (2026-11-13)
+
+Over a WSLg window the pointer comes from the Linux cursor theme, which was Adwaita's
+black arrow. Now it is your own Windows cursors, converted on your PC:
+
+1. At each start, `house-helper.ps1` (`Sync-WindowsCursors`) copies the cursor files named in
+   `HKCU:\Control Panel\Cursors` (plain Windows files where a role is empty) and a small
+   `cursors.json` (role to file, and `CursorBaseSize`) into the house's
+   `~/.local/share/station-256/windows-cursors`. Newer only, nothing deleted.
+2. `panel/start.sh` runs `panel/make-cursor-theme.py`, which writes the Xcursor theme
+   `~/.local/share/icons/Station-Windows` (every size in the file, the busy cursors animated,
+   all the CSS and classic X names as links). It only rebuilds when the files changed. Where a
+   role has no file the theme falls back to Adwaita.
+3. `start.sh` then sets `XCURSOR_THEME`/`XCURSOR_SIZE` and the desktop settings `cursor-theme`
+   and `cursor-size` (gsettings, which is where Electron reads them). Not for `--new-window`.
+   Without the copied cursors none of this happens.
+
+Size: the default is Windows' base size (32). To change it, put a number in
+`~/.config/house/cursor-size`. Windows scales its cursor by the display scale; whether the
+Linux side does the same under WSLg has to be judged by eye.
+
+Never shipped: the cursor files are Microsoft's. Windows' own I-beam and crosshair invert the
+background, which Linux cursors can't do, so the plain white-with-outline versions
+(`beam_r.cur`, `cross_r.cur`) stand in.
 
 ## Links, room sites and voice typing (2026-11-08)
 
@@ -1468,3 +1682,13 @@ Station 256 looks after itself, so nobody has to open a terminal to fix it.
 - **The log** is `~/.local/state/house/panel.log` (inside Ubuntu), trimmed to its last 1 MB once it passes 5 MB. Look for lines that start with `[station]`.
 
 The tests are `panel/test/start-supervisor.test.sh`, `panel/test/selfcheck.test.js` and the `selfheal` scene.
+
+## Hover text (the one rule)
+
+Hover text appears only where it helps, and `panel/renderer/tooltip.js` enforces it app-wide. It shows when the
+control has no text of its own (icon buttons, icon-only tabs, collapsed sidebar items), or when its text is cut
+off with "..." (then it shows the full text, nothing else). Cards, text buttons and rows whose text is fully
+visible show nothing, even if their tip has a second line or a shortcut. An icon-only control shows its whole tip,
+shortcut included. The only exception is an element someone marks `data-tip-fact` on purpose (none today). Do not
+put a `title` on a card or on text that
+fits; screen-reader labels are added automatically for buttons.

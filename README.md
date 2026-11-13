@@ -50,7 +50,7 @@ It started as my own setup. Now any Windows developer can install it with one co
 | **A room for every project** | Each project gets its own sealed room. The AI works in there and can see that one project, and nothing else. |
 | **You pick the AI** | Claude Code, Codex and Gemini are all optional. Tick the ones you use. Station 256 installs none of them for you and signs in to nothing. |
 | **House rules** | One page decides what AI may do: Allow, Ask or Block. It covers the internet, deleting files, installing packages, GitHub and passwords, for every AI in every room. |
-| **The lock** | One button closes the door between Linux and Windows. While it is on, nothing can be copied or pasted across. |
+| **The lock** | One button closes the door between Linux and Windows. While it is on, rooms can't see your C: drive. Copy and paste always work between Linux and Windows. |
 | **See what the AI did** | Every file shows which AI last edited it, which one last read it, and how many tokens it used. |
 | **Open anything, no extra apps** | PDFs, Word files, pictures, videos, songs and zip files all open inside Station 256. |
 | **Edit without leaving** | A document editor, a picture editor, a video editor, and a song page for titles and cover art. |
@@ -133,8 +133,8 @@ flowchart TB
     subgraph H["The house: Linux inside Windows"]
         direction TB
         P["Your project files"]
-        R1["Room: Weather App"]
-        R2["Room: Portfolio Site"]
+        R1["Weather App"]
+        R2["Portfolio Site"]
         P --- R1
         P --- R2
     end

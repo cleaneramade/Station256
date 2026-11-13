@@ -8,7 +8,6 @@
 const path = require('path');
 const { clipboard } = require('electron');
 const windowsLink = require('./windows-link');
-const files = require('./files');
 
 const MAX_TEXT = 1 << 20; // about a million characters, the same as the helper's limit
 // WSLg, which shows the house's windows on Windows, passes text to Windows by itself too, and it
@@ -19,24 +18,17 @@ const heard = { changes: 0, ours: 0, fromWindows: 0, written: 0 }; // counted fo
 let writing = Promise.resolve();
 let later = null;
 
-// Lock (the Windows door) closed means nothing crosses between the house and Windows, either way:
-// what's copied here stays here, and what's copied in Windows isn't taken. Inside the house, and
-// inside Windows, copying works as always. `onBlocked` tells the windows, so they can say so.
-let onBlocked = () => {};
-const setBlockedNotice = (fn) => { onBlocked = fn; };
-const isLocked = async () => !(await files.doorIsOpen());
-
+// The lock (the Windows door) is about the C: drive, not the clipboard: the clipboard belongs to
+// Windows, so it always crosses, locked or not (owner, 2026-11-12).
+// The answer is { ok: false } when the helper isn't linked, so the page can say so once.
 async function copyText(text) {
   if (typeof text !== 'string' || !text) return;
   clearTimeout(later);
   await clipboard.writeText(text);
-  if (await isLocked()) {
-    onBlocked();
-    // WSLg may have passed it to Windows by itself: once it settles, Windows takes it back.
-    later = setTimeout(() => windowsLink.clearClipboard(text.split(String.fromCharCode(13)).join('')), SETTLE);
-    return { ok: true, locked: true };
-  }
-  if (text.length <= MAX_TEXT) later = setTimeout(() => windowsLink.setClipboard({ text }), SETTLE);
+  if (text.length > MAX_TEXT) return;
+  if (!windowsLink.connected()) return { ok: false };
+  later = setTimeout(() => windowsLink.setClipboard({ text }), SETTLE);
+  return { ok: true };
 }
 
 // Files anywhere in the house can be copied, as anywhere on L: can be browsed. Only whole, plain
@@ -50,10 +42,6 @@ async function copyFiles(paths, move) {
     .slice(0, 10000);
   if (!files.length) return null;
   clearTimeout(later); // newer than any text still waiting to go
-  if (await isLocked()) {
-    onBlocked();
-    return { ok: true, locked: true };
-  }
   // Cut would let File Explorer take things off C: when pasting, and C: is view and copy only, so
   // anything from it only ever goes as a copy.
   const { DOOR } = require('./files');
@@ -73,7 +61,6 @@ function windowsChanged(message) {
   if (typeof text !== 'string' || !text || text.length > MAX_TEXT) return;
   heard.fromWindows += 1;
   writing = writing.then(async () => {
-    if (await isLocked()) return; // locked: what's copied in Windows stays in Windows
     // WSLg may have brought it already, with Windows' line ends or without.
     if ((await clipboard.readText()).replace(/\r\n/g, '\n') === text) return;
     await clipboard.writeText(text);
@@ -81,4 +68,4 @@ function windowsChanged(message) {
   }).catch(() => {});
 }
 
-module.exports = { copyText, copyFiles, windowsChanged, setBlockedNotice, heard };
+module.exports = { copyText, copyFiles, windowsChanged, heard };

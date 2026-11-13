@@ -40,6 +40,25 @@ fi
 if [ -z "${GALLIUM_DRIVER:-}" ]; then
   export GALLIUM_DRIVER=d3d12 HOUSE_PICKED_GL=1
 fi
+# The pointer over the window comes from the Linux cursor theme. Windows' own cursors, copied by the
+# Windows helper, are turned into the theme Station-Windows (make-cursor-theme.py, see
+# docs/03-how-it-works.md). Not with --new-window: that only pokes the running app. Without the
+# copied cursors nothing changes. A failure here never stops the start.
+CURSORS="$HOME/.local/share/station-256/windows-cursors"
+THEME="$HOME/.local/share/icons/Station-Windows"
+if [ "${1:-}" != "--new-window" ]; then
+  [ -d "$CURSORS" ] && timeout 10 python3 make-cursor-theme.py > /dev/null 2>&1
+  if [ -d "$THEME" ]; then
+    # Size: ~/.config/house/cursor-size, else Windows' own cursor size (32 normally).
+    SIZE="$(cat "$HOME/.config/house/cursor-size" 2>/dev/null)"
+    [ -z "$SIZE" ] && SIZE="$(sed -n 's/.*"baseSize": *\([0-9]*\).*/\1/p' "$CURSORS/cursors.json" 2>/dev/null)"
+    case "$SIZE" in ''|*[!0-9]*) SIZE=32 ;; esac
+    # Electron takes the cursor from the desktop settings (gsettings), so that is what gets set.
+    export XCURSOR_THEME=Station-Windows XCURSOR_SIZE="$SIZE"
+    timeout 3 gsettings set org.gnome.desktop.interface cursor-theme Station-Windows > /dev/null 2>&1
+    timeout 3 gsettings set org.gnome.desktop.interface cursor-size "$SIZE" > /dev/null 2>&1
+  fi
+fi
 # Stops a desktop accessibility helper that would otherwise linger after the panel closes.
 export NO_AT_BRIDGE=1
 LOG="$HOME/.local/state/house/panel.log"
