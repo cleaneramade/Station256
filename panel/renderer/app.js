@@ -4581,7 +4581,9 @@ async function showRules() {
   const data = await attempt(() => call('getRules'));
   if (!data) return null;
   rulesData = data;
-  aiToolsData = await attempt(() => call('aiToolsOverview'));
+  // Quietly: pages reload by themselves but the main program only changes on a restart, so an
+  // older one may not know this request yet. The section is then left out until the restart.
+  aiToolsData = await call('aiToolsOverview').catch(() => null);
   aiPick = null;
   if (open()) { // asked twice while the rules were loading
     activateTab(open());

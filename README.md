@@ -185,7 +185,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\LinuxHous
 
 It asks before it deletes anything, because removing the Linux removes the files inside it.
 
-The installer is new and has not yet been tried on a brand-new PC. If it trips, [the manual setup](docs/02-rebuild-step-by-step.md) does the same job by hand.
+The installer is new. A first install on a brand-new PC, and an update of a copy it installed, have been walked through as dry runs but not yet run for real. If it trips, [the manual setup](docs/02-rebuild-step-by-step.md) does the same job by hand.
 
 ## Choose your AI
 

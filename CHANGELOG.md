@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.1
+
+### Fixed
+
+- A first install that stopped in its last step now carries on when you run the command again. Before, it could be mistaken for a finished install.
+- The House Rules page no longer shows an error when the app's pages are newer than the running app.
+
 ## 1.3.0
 
 ### Added

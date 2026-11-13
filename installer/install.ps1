@@ -106,7 +106,10 @@ if ($CheckOnly) {
 # ---------------------------------------------------------------------------
 # Already installed? Then this is an update, never a second install.
 # ---------------------------------------------------------------------------
-if (-not $AskOnly) {
+# A first install that stopped part way (its last step, 'windows', is not done) carries on below.
+$savedState = Read-InstallState
+$midInstall = (($savedState.done.Count -gt 0) -and ($savedState.done -notcontains 'windows'))
+if ((-not $AskOnly) -and (-not $midInstall)) {
     $existing = Find-ExistingHouse
     if ($existing) {
         exit (Invoke-HouseUpdate -Existing $existing -AssumeYes ([bool]($Yes -or $Resume)))

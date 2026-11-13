@@ -376,6 +376,7 @@ Check 'probe: a Linux with no house is nothing' ($null -eq (ConvertFrom-HousePro
 $updateText  = Get-Content (Join-Path $root 'lib\update.ps1') -Raw
 $installText = Get-Content (Join-Path $root 'install.ps1') -Raw
 Check 'install.ps1 looks for an existing house before asking anything' ($installText.IndexOf('Find-ExistingHouse') -gt 0 -and $installText.IndexOf('Find-ExistingHouse') -lt $installText.IndexOf('Read-AllAnswers'))
+Check 'a first install that stopped part way is carried on, not called finished' ($installText -match "notcontains 'windows'" -and $installText.IndexOf("notcontains 'windows'") -lt $installText.IndexOf('Find-ExistingHouse'))
 Check 'a developer copy is refused before any step runs' ($updateText.IndexOf('$Existing.isGit') -lt $updateText.IndexOf('Invoke-PhaseCode'))
 Check 'an update leaves the drive and shortcuts alone'   ($updateText -match 'Invoke-PhaseWindows -A \$a -FilesOnly')
 Check 'an update never runs the WSL, user, settings or Docker steps' ($updateText -notmatch 'Invoke-Phase(Wsl|User|Config|Docker|Packages)')
