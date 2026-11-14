@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.4.1
+
+### Changed
+
+- **Browser tabs you aren't using go to sleep.** A browser tab out of sight for 10 minutes lets its page go and looks faded. Click it and it wakes at the same page. A tab an AI is using, one playing sound or one still loading never sleeps.
+- **Less work in the background.** Station asks Docker about rooms once and shares the answer, instead of each part asking on its own. Room AI checks happen every 12 seconds when things are quiet, and every 3 seconds for a minute after you press Enter in a room. Checks pause while the window is hidden.
+- **An honest browser identity.** The Web Browser now says it is Chromium on Linux, the same in its headers and in the page. It no longer poses as Google Chrome or fakes `window.chrome`, which sign-ins such as Google's can see through. This replaces the Chrome identity from 1.4.0.
+- **Sign-in popups are real windows.** When a site opens a sized sign-in window, it opens as a small popup window that shares the tab's sign-ins and can answer the page that opened it, as sign-ins like Google's expect. It is walled in like a tab. A plain new-window link still opens a tab, and an AI's tab never gets popups.
+
+### Fixed
+
+- **Drag to highlight in terminals.** A plain drag now highlights text in every terminal, even when the program in it (Herdr, Claude) uses the mouse. The highlight stays while you move the mouse. Copy it with Ctrl+C or right-click Copy. A double-click picks a word, and a plain click still goes to the program.
+- **A project's AI chat history is never deleted.** Station used to clean up a project's chat-history volume when it thought the project was gone, and could remove it for a project that still existed. That clean-up is gone, and each room's history volume is now held by a stopped `keep-` container so it can't be removed by mistake. A room still opens if that holder can't be made.
+
 ## 1.4.0
 
 ### Added

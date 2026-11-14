@@ -105,6 +105,17 @@ ensure_secrets() {
   chmod 700 "$SECRETS" "$SECRETS/$1"
 }
 
+# A stopped, never-run "keep-" container that holds the project's Claude volume (chat history,
+# sign-in). Docker refuses to delete a volume a container holds, even with -f or a prune, so no
+# clean-up anywhere can wipe it (old copies of the panel did, twice, in Nov 2026). The image is
+# an empty 5 kB one; housekeeping only removes room-* containers.
+keep_history() {
+  docker container inspect "keep-$1" >/dev/null 2>&1 && return 0
+  docker image inspect house-keep >/dev/null 2>&1 || tar cf - -T /dev/null | docker import - house-keep >/dev/null 2>&1 || true
+  docker create --name "keep-$1" --network none -v "house-claude-$1:/v" house-keep none >/dev/null 2>&1 \
+    || log "keep-$1: couldn't hold the chat history volume" || true
+}
+
 # Gives the room a name for ssh, so nothing depends on an address that changes
 # every time the room starts.
 write_ssh_entry() {
@@ -535,6 +546,7 @@ start_room() {
   # and neither is ever handed to a different room.
   ensure_room_host_key "$id"
   ensure_secrets "$id"
+  keep_history "$id"
   extra+=(-v "$ROOM_HOST_KEYS/$id:/home/dev/.ssh/ssh_host_ed25519_key:ro")
   extra+=(-v "$SECRETS/$id:/secrets:ro")
   # This project's own edit log. The room writes to it, the house only reads it.

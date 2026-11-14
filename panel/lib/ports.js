@@ -115,9 +115,10 @@ async function poll() {
   if (polling) return;
   polling = true;
   try {
-    const out = await run('docker', ['ps', '--format', '{{.Names}}'], 8000);
-    if (out === null) return; // Docker didn't answer, so nothing is changed
-    const up = out.split('\n').filter((line) => /^room-[A-Za-z0-9._-]+$/.test(line));
+    // The room list the rest of Station shares (lib/house.js), not a docker process of its own.
+    const open = await require('./house').rooms().catch(() => null);
+    if (!open) return; // Docker didn't answer, so nothing is changed
+    const up = open.map((room) => `room-${String(room.name).replace(/ /g, '.')}`).filter((line) => /^room-[A-Za-z0-9._-]+$/.test(line));
     for (const container of [...rooms.keys()]) if (!up.includes(container)) rooms.delete(container);
     for (const forward of [...forwards.values()]) {
       if (!up.includes(`room-${forward.room.replace(/ /g, '.')}`)) end(forward);

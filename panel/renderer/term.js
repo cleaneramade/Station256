@@ -83,8 +83,8 @@ function clipboardRequest(data) {
 }
 
 // A room terminal runs inside Herdr, which opens its own menus on right and middle clicks (split,
-// close, new tab). A room terminal is just a terminal, so those clicks stop here. Left clicks,
-// dragging to select and the wheel still go through.
+// close, new tab). A room terminal is just a terminal, so those clicks stop here. Left clicks and
+// the wheel still go through.
 function keepClicksFromHerdr(host) {
   const stop = (event) => {
     const held = event.type === 'mousemove' ? event.buttons & 6 : event.button === 1 || event.button === 2;
@@ -96,6 +96,50 @@ function keepClicksFromHerdr(host) {
   host.addEventListener('contextmenu', (event) => {
     event.stopPropagation();
     event.preventDefault();
+  }, true);
+}
+
+// Drag to highlight, as in Windows, even when the program wants the mouse (Herdr, Claude). xterm
+// only highlights then on a Shift+drag, so a plain press is held back: if the mouse moves, it is
+// sent as a Shift press (xterm highlights); if it is let go first, the plain click goes to the
+// program. A double click picks a word.
+// Herdr and Claude also ask for every mouse move, and xterm wipes the highlight whenever it tells
+// the program something. So while highlighting, or while a highlight shows, moves aren't told.
+function dragAlwaysSelects(term, host) {
+  const ours = new WeakSet();
+  let selecting = false;
+  const resend = (start, shiftKey) => {
+    const copy = new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window, detail: start.detail,
+      clientX: start.clientX, clientY: start.clientY, screenX: start.screenX, screenY: start.screenY, button: 0, buttons: 1, shiftKey });
+    ours.add(copy);
+    if (shiftKey) {
+      selecting = true;
+      window.addEventListener('mouseup', () => { selecting = false; }, { capture: true, once: true });
+    }
+    start.target.dispatchEvent(copy);
+  };
+  host.addEventListener('mousemove', (event) => {
+    if (term.modes.mouseTrackingMode === 'none' || !(selecting || term.hasSelection())) return;
+    event.stopPropagation(); // keeps it from the program (xterm's listener on the terminal)
+    // xterm grows the highlight from a listener on the page itself, so it still gets the move there.
+    if (selecting) document.dispatchEvent(new MouseEvent('mousemove', event));
+  }, true);
+  host.addEventListener('mousedown', (start) => {
+    if (ours.has(start) || start.button !== 0 || start.shiftKey || start.ctrlKey || start.altKey || start.metaKey) return;
+    if (term.modes.mouseTrackingMode === 'none') return; // no program wants the mouse: xterm highlights already
+    start.stopPropagation();
+    start.preventDefault();
+    term.focus();
+    if (start.detail >= 2) return resend(start, true);
+    const done = (shiftKey) => {
+      window.removeEventListener('mousemove', moved, true);
+      window.removeEventListener('mouseup', letGo, true);
+      resend(start, shiftKey);
+    };
+    const moved = (event) => { if (Math.hypot(event.clientX - start.clientX, event.clientY - start.clientY) > 3) done(true); };
+    const letGo = () => done(false);
+    window.addEventListener('mousemove', moved, true);
+    window.addEventListener('mouseup', letGo, true);
   }, true);
 }
 
@@ -312,13 +356,14 @@ function mountTerminal(host, id, initialText, { room = false } = {}) {
   term.unicode.activeVersion = '11';
   term.open(host);
   if (room) keepClicksFromHerdr(host);
+  dragAlwaysSelects(term, host);
   term.parser.registerOscHandler(52, clipboardRequest);
   term.registerLinkProvider(linkFinder(term, id));
   keepLinksFresh(term, host);
 
   // As in Windows Terminal: Ctrl+C copies when text is selected and stops the program when not,
   // and Ctrl+V (or Alt+V) pastes. Ctrl+Shift+C and Ctrl+Shift+V also work, as in the Ubuntu terminal.
-  // In a room terminal, drag to select and Ctrl+C copies; Shift+drag selects here instead.
+  // Drag to highlight in any terminal (dragAlwaysSelects), then Ctrl+C or right-click Copy.
   const copy = () => {
     window.house.call('clipboardWrite', term.getSelection());
     term.clearSelection();
@@ -328,8 +373,7 @@ function mountTerminal(host, id, initialText, { room = false } = {}) {
     const message = String(error.message || error).replace(/^Error invoking remote method 'call': (Error: )?/, '');
     window.dispatchEvent(new CustomEvent('station:notice', { detail: message }));
   });
-  // Right-click: Station's own menu, the same four as everywhere (app.js). Copy takes what's picked
-  // here; in a room terminal that's a Shift+drag (a plain drag is Herdr's, copied with Ctrl+C).
+  // Right-click: Station's own menu, the same four as everywhere (app.js). Copy takes what's highlighted.
   host.addEventListener('contextmenu', (event) => {
     event.preventDefault();
     rightClickMenu(event.clientX, event.clientY, {

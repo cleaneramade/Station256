@@ -4174,6 +4174,9 @@ Object.assign(SCENES, require('./audit-scene')); // Release audit: demo files, r
 Object.assign(SCENES, require('./ai-browser-scene')); // An AI in a room using the Web Browser
 Object.assign(SCENES, require('./snap-layouts-scene')); // Tabs and windows side by side
 Object.assign(SCENES, require('./tab-split-scene')); // Dragging a tab onto the page to split
+Object.assign(SCENES, require('./tab-sleep-scene')); // Browser tabs out of sight sleep and wake at the same page
+Object.assign(SCENES, require('./term-select-scene')); // Drag to highlight in a terminal
+Object.assign(SCENES, require('./term-select-herdr')); // The same inside the real Herdr (run by hand)
 Object.assign(SCENES, require('./files-split-scene')); // Two Files tabs side by side
 Object.assign(SCENES, require('./folder-views-scene')); // Each folder keeps its own view and sort
 Object.assign(SCENES, require('./ux-scene')); // The audit's smaller changes

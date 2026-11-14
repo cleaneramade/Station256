@@ -316,12 +316,6 @@ async function emptyTrash(onProgress) {
   return destroy(items.filter((name) => name !== '.info').map((name) => path.join(TRASH, name)), onProgress);
 }
 
-// The names of everything in the trash, as they were before being trashed.
-async function trashedNames() {
-  const items = await fs.readdir(TRASH).catch(() => []);
-  return items.filter((name) => name !== '.info').map((name) => name.replace(/^\d+-/, ''));
-}
-
 /* Moves or copies things into a folder. Says where each one ended up, so it can be undone, and
    which ones failed. A copy counts as it goes when onProgress is given; a move inside the house is
    just a rename, so it's instant. */
@@ -709,7 +703,7 @@ async function ensureFolder(dir) {
 }
 
 module.exports = {
-  TRASH, DOOR, DOOR_FLAG, doorIsOpen, assertAllowed, assertReadable, windowsHome, list, makeFolder, makeFile, rename, trash, trashItems, restore, destroy, removeForever, emptyTrash, trashedNames,
+  TRASH, DOOR, DOOR_FLAG, doorIsOpen, assertAllowed, assertReadable, windowsHome, list, makeFolder, makeFile, rename, trash, trashItems, restore, destroy, removeForever, emptyTrash,
   paste, transfer, moveBack, properties, assertDoorOpen, importFromWindows, readText, ensureFolder, freeName, assertNotTrash,
   readDoc, docStat, writeDoc, replaceFile, replaceWith, placeFile, putBack, inTrash,
 };

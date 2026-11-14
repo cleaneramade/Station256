@@ -8,6 +8,7 @@ R="$HOME/house/panel/lib/rules.js"
 SAVED_RULES="$(cat ~/.config/house/rules.json)"
 cleanup() {
   room close "$N" >/dev/null 2>&1
+  docker rm -f "keep-$N" >/dev/null 2>&1
   docker volume rm "house-claude-$N" >/dev/null 2>&1
   rm -rf "$HOME/projects/$N"
   printf '%s\n' "$SAVED_RULES" > ~/.config/house/rules.json

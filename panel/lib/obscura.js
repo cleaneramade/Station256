@@ -26,6 +26,9 @@ let notify = () => {};
 // A second wall for requests, set by lib/ai-browser.js: (details) => true or false (may wait).
 let guard = () => true;
 const setGuard = (fn) => { guard = fn; };
+// Also set by lib/ai-browser.js: (webContentsId) => true for a page an AI is using.
+let aiPage = () => false;
+const setAiPage = (fn) => { aiPage = fn; };
 
 // A page can ask for a hundred tabs or a hundred downloads in a loop. tooMany(times, most, ms) says
 // when `most` have already happened within `ms`; otherwise it counts this one.
@@ -167,34 +170,23 @@ function browserKey(input) {
   return ['l', 'r', 'f', 'w', 't', '+', '=', '-', '_', '0', 'Tab'].includes(lower === 'tab' ? 'Tab' : lower);
 }
 
-// One consistent real-Chrome identity for every page: the user-agent text, the Sec-CH-UA hints and
-// window.chrome all say "Chrome <major> on Linux" (the platform stays honest). Sent through the page's own
-// debugger, which Electron has no setting for; it stays through navigation. If the debugger can't be
-// attached the page still loads, just with Electron's own look.
+// One honest identity for every page: Chromium <major> on Linux, which is what Obscura is. The
+// user-agent text, the Sec-CH-UA headers and navigator.userAgentData all say the same thing.
+// It used to claim "Google Chrome" and fake Chrome's window.chrome extras; Google's sign-in refuses
+// browsers that pose as Chrome (its 2020 guidance), so nothing is faked any more. Electron has no
+// setting for the JS brands, so they are set through the page's own debugger; if that can't attach
+// the page still loads with Electron's own brands (the same names, the grease brand may differ).
 const FULL = process.versions.chrome;
 const MAJOR = FULL.split('.')[0];
 const CHROME_UA = `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${MAJOR}.0.0.0 Safari/537.36`;
-// What real Chrome has on window.chrome for web pages (only filled where missing; never throws).
-const CHROME_OBJECT = `(() => { try {
-  const c = window.chrome || (window.chrome = {});
-  const t = Date.now() / 1000;
-  if (!c.app) c.app = { isInstalled: false, InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
-    RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' },
-    getDetails() { return null; }, getIsInstalled() { return false; }, runningState() { return 'cannot_run'; } };
-  if (!c.csi) c.csi = () => ({ onloadT: Date.now(), startE: Math.round(t * 1000) - 300, pageT: 300, tran: 15 });
-  if (!c.loadTimes) c.loadTimes = () => ({ requestTime: t - 0.3, startLoadTime: t - 0.3, commitLoadTime: t - 0.2, finishDocumentLoadTime: t - 0.1,
-    finishLoadTime: t - 0.05, firstPaintTime: t - 0.1, firstPaintAfterLoadTime: 0, navigationType: 'Other', wasFetchedViaSpdy: true,
-    wasNpnNegotiated: true, npnNegotiatedProtocol: 'h2', wasAlternateProtocolAvailable: false, connectionInfo: 'h2' });
-  if (!c.runtime) c.runtime = {};
-} catch {} })();`;
-const HINT_BRANDS = (version, grease) => `"Chromium";v="${version}", "Google Chrome";v="${version}", "Not?A_Brand";v="${grease}"`;
+const HINT_BRANDS = (version, grease) => `"Chromium";v="${version}", "Not?A_Brand";v="${grease}"`;
 const identity = () => ({
   userAgent: CHROME_UA,
   platform: 'Linux x86_64',
   acceptLanguage: app.getLocale(),
   userAgentMetadata: {
-    brands: [{ brand: 'Chromium', version: MAJOR }, { brand: 'Google Chrome', version: MAJOR }, { brand: 'Not?A_Brand', version: '24' }],
-    fullVersionList: [{ brand: 'Chromium', version: FULL }, { brand: 'Google Chrome', version: FULL }, { brand: 'Not?A_Brand', version: '24.0.0.0' }],
+    brands: [{ brand: 'Chromium', version: MAJOR }, { brand: 'Not?A_Brand', version: '24' }],
+    fullVersionList: [{ brand: 'Chromium', version: FULL }, { brand: 'Not?A_Brand', version: '24.0.0.0' }],
     fullVersion: FULL, platform: 'Linux', platformVersion: '', architecture: 'x86', bitness: '64', model: '', mobile: false, wow64: false,
   },
 });
@@ -202,13 +194,23 @@ async function identify(guest) {
   try {
     if (!guest.debugger.isAttached()) guest.debugger.attach('1.3');
     await guest.debugger.sendCommand('Emulation.setUserAgentOverride', identity());
-    await guest.debugger.sendCommand('Page.enable');
-    await guest.debugger.sendCommand('Page.addScriptToEvaluateOnNewDocument', { source: CHROME_OBJECT });
   } catch { /* the page is gone, or something else holds its debugger: it keeps Electron's look */ }
 }
 
-// One Obscura page: where it may go, what it may open, what it tells the tab.
-function guestHook(guest) {
+// The same wall as a tab's page (guardAttach), for a sign-in popup.
+const LOCKED = {
+  nodeIntegration: false, nodeIntegrationInSubFrames: false, nodeIntegrationInWorker: false, contextIsolation: true,
+  sandbox: true, webSecurity: true, allowRunningInsecureContent: false, webviewTag: false, disableBlinkFeatures: 'FileSystemAccessLocal',
+};
+function popupOptions(guest) {
+  let parent;
+  try { parent = BrowserWindow.fromWebContents(guest.hostWebContents || guest) || undefined; } catch { /* none */ }
+  return { width: 520, height: 680, parent, autoHideMenuBar: true, backgroundColor: '#ffffff', webPreferences: { ...LOCKED } };
+}
+
+// One Obscura page: where it may go, what it may open, what it tells the tab. popup: a sign-in
+// window a page opened (see setWindowOpenHandler below), which has no tab to tell.
+function guestHook(guest, popup = false) {
   // If someone else takes the debugger and lets go, take it back (not while the page is closing).
   guest.debugger.on('detach', () => {
     // A moment later, so a page that is closing is gone by then (taking it back at once hung the close).
@@ -217,11 +219,20 @@ function guestHook(guest) {
   identify(guest);
   guest.on('dom-ready', () => applyScheme(guest));
   guest.on('will-prevent-unload', (event) => event.preventDefault());
-  // A page that asks for a window gets a new Obscura tab, never a window of Electron's own.
-  // At most 3 new tabs in 5 seconds, however many pages ask.
-  guest.setWindowOpenHandler(({ url }) => {
-    if (mayGoTo(url) && !tooMany(opened, 3, 5000)) notify(guest, { kind: 'open', url });
+  // A link or window.open without a size gets a new Obscura tab. A small window a page opens with a
+  // size ("Sign in with Google", PayPal...) stays a real popup, as in Chrome: the page that opened it
+  // waits for it to report back (window.opener), which a separate tab can't do, so sign-in failed.
+  // It gets the same wall as a tab's page. At most 3 of either in 5 seconds, however many pages ask.
+  guest.setWindowOpenHandler(({ url, disposition }) => {
+    if (!mayGoTo(url) || tooMany(opened, 3, 5000)) return { action: 'deny' };
+    // shortcut: no check that a click asked for the popup (Electron doesn't say); the 3-in-5-seconds limit applies, as it did to tabs.
+    if (disposition === 'new-window' && !aiPage(guest.id)) return { action: 'allow', overrideBrowserWindowOptions: popupOptions(guest) };
+    notify(guest, { kind: 'open', url });
     return { action: 'deny' };
+  });
+  guest.on('did-create-window', (win) => {
+    win.removeMenu();
+    guestHook(win.webContents, true);
   });
   // Bluetooth asks the page itself, not the session; left alone, Electron picks the first device.
   guest.on('select-bluetooth-device', (event, _list, callback) => { event.preventDefault(); callback(''); });
@@ -237,7 +248,7 @@ function guestHook(guest) {
     else if (!frameMayGoTo(event.url)) event.preventDefault();
   });
   guest.on('before-input-event', (event, input) => {
-    if (!browserKey(input)) return;
+    if (popup || !browserKey(input)) return; // a popup has no tab to take the keys
     event.preventDefault();
     notify(guest, { kind: 'key', key: input.key, ctrl: !!input.control, shift: !!input.shift, alt: !!input.alt });
   });
@@ -323,4 +334,4 @@ function guardAttach(event, webPreferences, params) {
   params.partition = PARTITION;
 }
 
-module.exports = { start, owns, setDark, guardAttach, setFront, isFront, setGuard, PARTITION, mayGoTo, freeName };
+module.exports = { start, owns, setDark, guardAttach, setFront, isFront, setGuard, setAiPage, PARTITION, mayGoTo, freeName };

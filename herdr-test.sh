@@ -26,6 +26,7 @@ cleanup() {
   rm -rf ~/.config/house/secrets/"$A" ~/.config/house/secrets/"$B"
   rm -f ~/.ssh/room-hosts/"$A" ~/.ssh/room-hosts/"$A".pub
   rm -f ~/.ssh/room-hosts/"$B" ~/.ssh/room-hosts/"$B".pub
+  docker rm -f "keep-$A" "keep-$B" >/dev/null 2>&1 || true
   docker volume rm "house-claude-$A" "house-claude-$B" >/dev/null 2>&1 || true
   # With their folders gone, this takes the test rooms out of Herdr's list.
   "$ROOM" agents --ready >/dev/null 2>&1 || true

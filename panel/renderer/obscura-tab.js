@@ -604,6 +604,7 @@ function hookObscura(tab) {
   view.addEventListener('did-start-loading', () => setLoading(true));
   view.addEventListener('did-stop-loading', () => {
     setLoading(false);
+    tab.waking = false;
     try { obscuraShowAddress(tab, view.getURL()); } catch { /* gone */ }
   });
   view.addEventListener('did-start-navigation', (event) => {
@@ -614,6 +615,7 @@ function hookObscura(tab) {
   });
   view.addEventListener('did-navigate', (event) => {
     obscuraShowAddress(tab, event.url);
+    if (tab.waking) { tab.waking = false; return; } // back from sleep (sleepObscura): not a new visit
     obscuraSitesReady().then(() => { rememberObscuraSite(tab, event.url); rememberObscuraVisit(tab, event.url); });
   });
   view.addEventListener('did-navigate-in-page', (event) => { if (event.isMainFrame) obscuraShowAddress(tab, event.url); });
@@ -796,6 +798,7 @@ const aiBrowserTab = (project, session) => state.tabs.find((tab) => tab.kind ===
 // (style.css), and unable to take the keyboard (app.js clears this when the owner opens the tab). It
 // can't be moved to another window. Also used when a reload hands it back (app.js addMovedTab).
 function markAiTab(tab, project, session) {
+  wakeObscura(tab); // an AI needs a live page
   tab.aiOf = project;
   tab.aiSession = session;
   tab.host.classList.add('ai-live');
@@ -876,7 +879,41 @@ window.house.on('aibrowser:pointer', ({ id, x, y, doing }) => {
   aiGlide(tab, [x / zoom, y / zoom], doing);
 });
 
+// A browser tab out of sight for 10 minutes goes to sleep: its page is let go (its memory and
+// everything it was running stop) and comes back at the same address when the tab is shown again.
+// Never a page playing sound, still loading, a room's site preview, or one an AI is using.
+const OBSCURA_SLEEP_MS = 10 * 60 * 1000;
+function sleepObscura(tab) {
+  let url = '';
+  try { url = tab.view.getURL(); } catch { return; }
+  if (!/^https?:\/\//i.test(url) || !tab.view.parentNode) return; // the start page: nothing to let go
+  tab.asleep = url;
+  tab.sleepParent = tab.view.parentNode;
+  tab.view.setAttribute('src', url); // a webview put back loads its src (Electron)
+  tab.view.remove();
+  tab.el.classList.add('asleep');
+}
+function wakeObscura(tab) {
+  if (!tab.asleep || tab.closed) return;
+  tab.asleep = null;
+  tab.waking = true; // the reload isn't a new visit for History
+  tab.el.classList.remove('asleep');
+  tab.sleepParent.prepend(tab.view);
+}
+function sleepCheck(now = Date.now(), after = OBSCURA_SLEEP_MS) {
+  for (const tab of obscuraTabs()) {
+    if (!tab.host.hidden) { tab.hiddenSince = 0; wakeObscura(tab); continue; }
+    if (tab.asleep) continue;
+    tab.hiddenSince ||= now;
+    let audible = false;
+    try { audible = tab.view.isCurrentlyAudible(); } catch { /* not ready */ }
+    if (now - tab.hiddenSince >= after && !audible && !tab.loading && !tab.aiOf && !tab.previewOf) sleepObscura(tab);
+  }
+}
+setInterval(() => sleepCheck(), 30000);
+
 function showObscura(tab) {
+  wakeObscura(tab);
   $('item-count').textContent = '';
   requestAnimationFrame(() => {
     if (tab.closed || state.active !== tab || tabDragging) return;
@@ -896,7 +933,7 @@ function closeObscura(tab) {
 
 // What another window (or a restart) needs to open this tab again: just its address.
 function obscuraDescription(tab) {
-  let url = tab.url || '';
+  let url = tab.asleep || tab.url || '';
   try {
     const now = tab.view.getURL();
     if (/^https?:\/\//i.test(now)) url = now;
@@ -904,4 +941,4 @@ function obscuraDescription(tab) {
   return { kind: 'obscura', url, ai: tab.aiOf ? { project: tab.aiOf, session: tab.aiSession || '' } : null }; // main only lets this through for a reload, never another window
 }
 
-window.houseTest = Object.assign(window.houseTest || {}, { aiAtWork, aiGlide, aiResting, zoomObscura, hostZoom, pageScale: () => pageScale, openInObscura, openObscura, obscuraAddress, setObscuraInfo, stopAiBrowser, rememberObscuraVisit, toggleBookmark, showObscuraList, bookmarks: () => obscuraBookmarks, history: () => obscuraHistory, ready: () => obscuraSitesReady() });
+window.houseTest = Object.assign(window.houseTest || {}, { sleepCheck, aiAtWork, aiGlide, aiResting, zoomObscura, hostZoom, pageScale: () => pageScale, openInObscura, openObscura, obscuraAddress, setObscuraInfo, stopAiBrowser, rememberObscuraVisit, toggleBookmark, showObscuraList, bookmarks: () => obscuraBookmarks, history: () => obscuraHistory, ready: () => obscuraSitesReady() });

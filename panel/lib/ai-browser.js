@@ -496,6 +496,8 @@ function start(deps) {
 
   return {
     allowed,
+    // A page an AI is using (its popups would be outside the address wall above, so it gets none).
+    isAiPage: (id) => guests.has(id),
     answer,
     // The tab's Stop: that session loses its tab, and must be let in again before it can use the browser.
     stop(project, session = '') {

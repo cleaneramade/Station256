@@ -37,6 +37,7 @@ room close "$A"; room close "$B"
 echo "--- folded away, file kept?"; cat "$HOME/projects/$A/kept.txt"
 docker ps --filter label=house.room --format '{{.Names}}' | wc -l
 
+docker rm -f "keep-$A" "keep-$B" >/dev/null 2>&1 || true
 docker volume rm "house-claude-$A" "house-claude-$B" >/dev/null
 rm -rf "$HOME/projects/$A" "$HOME/projects/$B"
 rm -rf "$HOME/.local/state/house/edits/$A" "$HOME/.local/state/house/edits/$B"

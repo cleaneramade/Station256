@@ -12,6 +12,7 @@ DOOR_WAS_OPEN=no
 [ -f /run/house/windows-door-open ] && DOOR_WAS_OPEN=yes
 cleanup() {
   room close "$N" >/dev/null 2>&1
+  docker rm -f "keep-$N" >/dev/null 2>&1
   docker volume rm "house-claude-$N" >/dev/null 2>&1
   rm -rf "$HOME/projects/$N"
   rm -f "$HOME"/Documents/zz-rules-test-*

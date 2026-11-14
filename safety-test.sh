@@ -14,6 +14,7 @@ check() { if [ "$2" = "$3" ]; then pass "$1"; else fail "$1 (expected '$3', got 
 SAVED_RULES="$(cat ~/.config/house/rules.json 2>/dev/null)"
 cleanup() {
   room close "$N" >/dev/null 2>&1
+  docker rm -f "keep-$N" >/dev/null 2>&1
   docker volume rm "house-claude-$N" >/dev/null 2>&1
   rm -rf "$HOME/projects/$N" "$PLAY" "$FAKE"
   sudo -n /usr/local/sbin/house-rules door-close

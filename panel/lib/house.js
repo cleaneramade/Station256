@@ -72,7 +72,21 @@ function checkProject(name) {
 }
 
 // Fails if Docker can't answer. "Couldn't check" must never be mistaken for "no rooms".
-async function rooms() {
+// The status bar of every window, the AI alerts and the Agents page all ask every few seconds, so
+// one answer is shared for a moment instead of a docker process each. The lock and moving a
+// project ask fresh (freshRooms).
+let roomsAsked = null;
+let roomsAt = 0;
+function rooms() {
+  if (!roomsAsked || Date.now() - roomsAt > 1500) {
+    roomsAt = Date.now();
+    roomsAsked = freshRooms();
+    roomsAsked.catch(() => { roomsAt = 0; }); // a failure is never kept
+  }
+  return roomsAsked;
+}
+
+async function freshRooms() {
   const out = await run('docker', ['ps', '--no-trunc', '--filter', 'label=house.room', '--format', '{{.ID}}|{{.Label "house.room"}}|{{.Label "house.door"}}'], 8000);
   const cut = (await readOr(DOOR_CUT, '')).split('\n'); // rooms the lock took /windows from
   return out.split('\n').filter(Boolean).map((line) => {
@@ -115,24 +129,15 @@ async function status() {
 async function heldByRooms(targets) {
   const projects = targets.filter((target) => path.dirname(path.resolve(target)) === PROJECTS);
   if (!projects.length) return [];
-  const open = await rooms();
+  const open = await freshRooms();
   return projects
     .filter((target) => open.some((room) => room.name === path.basename(target)))
     .map((target) => ({ path: target, message: `Its room is open. Close the room first.` }));
 }
 
-// A project's Claude settings are kept until the project is gone for good, so restoring a
-// project from the trash brings them back with it.
-async function pruneRoomSettings() {
-  const out = await run('docker', ['volume', 'ls', '--filter', 'name=house-claude-', '--format', '{{.Name}}']);
-  const trashed = await files.trashedNames();
-  await Promise.all(out.split('\n').filter(Boolean).map(async (volume) => {
-    // Volume names can't have spaces, so bin/room writes a dot for each one (see room_id there).
-    const name = volume.replace(/^house-claude-/, '').replace(/\./g, ' ');
-    const stillHere = await fs.access(path.join(PROJECTS, name)).then(() => true, () => false);
-    if (!stillHere && !trashed.includes(name)) await run('docker', ['volume', 'rm', volume]).catch(() => {});
-  }));
-}
+// A project's Claude volume (chat history, sign-in) is never deleted by Station. An automatic
+// clean-up used to remove the volume of any project it couldn't see, which can wipe real chat
+// histories (a copy run with a different home sees no projects). bin/room also holds each volume.
 
 async function newProject(name) {
   checkProject(name);
@@ -167,7 +172,7 @@ async function closeDoor() {
     throw new Error(String(error.stderr || '').trim() || error.message);
   }
   // Checked here too, so an older installed house-rules that doesn't cut rooms can't pass as locked.
-  const left = (await rooms()).filter((room) => room.windowsDoor);
+  const left = (await freshRooms()).filter((room) => room.windowsDoor);
   if (left.length) throw new Error(`These rooms could still read your Windows files: ${left.map((room) => room.name).join(', ')}`);
 }
 
@@ -321,5 +326,5 @@ async function requestResize(gigabytes) {
 }
 
 module.exports = {
-  paths, status, rooms, isLowOnSpace, heldByRooms, pruneRoomSettings, newProject, closeRoom, openDoor, closeDoor, getRules, setRule, ensureRules: rules.ensureFiles, system, endProcess, setKeepAwake, requestResize,
+  paths, status, rooms, isLowOnSpace, heldByRooms, newProject, closeRoom, openDoor, closeDoor, getRules, setRule, ensureRules: rules.ensureFiles, system, endProcess, setKeepAwake, requestResize,
 };

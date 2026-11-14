@@ -211,16 +211,41 @@ function create({ listRooms, statuses, notify, unnotify, looking = () => false, 
     return 'opened';
   }
 
+  // Every few seconds while an AI is working or changing; four times slower while all of them rest,
+  // since each look runs programs in every room. Typing in a room terminal (poke) speeds it up again.
+  let run = 0;
+  let loop = null;
+  let quickUntil = 0;
+  const busyNow = () => Date.now() < quickUntil || [...known.values()].some((item) => item.pending || item.status === 'working');
+  const wait = () => (busyNow() ? every : every * 4);
+
   return {
     start() {
-      clearInterval(timer);
-      tick();
-      timer = setInterval(tick, every);
+      const mine = ++run;
+      clearTimeout(timer);
+      loop = async () => {
+        await tick().catch(() => {});
+        if (mine !== run) return;
+        clearTimeout(timer); // a poke may have set one meanwhile: only one wait at a time
+        timer = setTimeout(loop, wait());
+      };
+      loop();
     },
     stop() {
-      clearInterval(timer);
+      run += 1;
+      loop = null;
+      clearTimeout(timer);
       timer = null;
     },
+    poke() {
+      const slow = !busyNow();
+      quickUntil = Date.now() + 60000;
+      if (slow && loop) {
+        clearTimeout(timer);
+        timer = setTimeout(loop, every);
+      }
+    },
+    busyNow,
     tick,
     answer,
     // You've just looked at that terminal, so its notification has done its job.

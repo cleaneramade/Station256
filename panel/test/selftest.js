@@ -162,6 +162,7 @@ async function run(win, terminals) {
   }
 
   const { execFileSync } = require('child_process');
+  try { execFileSync('docker', ['rm', '-f', `keep-${NAME}`], { stdio: 'ignore' }); } catch { /* none */ }
   try { execFileSync('docker', ['volume', 'rm', `house-claude-${NAME}`], { stdio: 'ignore' }); } catch { /* none */ }
   fs.rmSync(PROJECT, { recursive: true, force: true });
   console.log(`RESULT ${results.filter(Boolean).length}/${results.length}`);

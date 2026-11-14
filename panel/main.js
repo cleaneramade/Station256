@@ -966,11 +966,7 @@ const api = {
     : files.transfer(paths, dir, false, progressTo(event.sender))),
   trashItems: (_event, paths) => withoutHeldAnd(paths, async (free) => files.trashItems(free)),
   moveBack: (_event, pairs) => withoutHeld(pairs.map((pair) => pair.to), (free) => files.moveBack(pairs.filter((pair) => free.includes(pair.to)))),
-  removeForever: async (event, paths) => {
-    const failures = await withoutHeld(paths, (free) => files.removeForever(free, progressTo(event.sender)));
-    await house.pruneRoomSettings().catch(() => {});
-    return failures;
-  },
+  removeForever: (event, paths) => withoutHeld(paths, (free) => files.removeForever(free, progressTo(event.sender))),
   properties: (_event, paths) => files.properties(paths),
   // Zip files: make one, unpack one (with progress), or look inside one.
   compress: (event, paths) => archive.compress(paths, progressTo(event.sender)),
@@ -1008,16 +1004,8 @@ const api = {
   trash: (_event, paths) => withoutHeld(paths, (free) => files.trash(free)),
   paste: (_event, paths, dir, move) => (move ? withoutHeld(paths, (free) => files.paste(free, dir, true)) : files.paste(paths, dir, false)),
   restore: (_event, paths) => files.restore(paths),
-  destroy: async (event, paths) => {
-    const failures = await files.destroy(paths, progressTo(event.sender));
-    await house.pruneRoomSettings().catch(() => {});
-    return failures;
-  },
-  emptyTrash: async (event) => {
-    const failures = await files.emptyTrash(progressTo(event.sender));
-    await house.pruneRoomSettings().catch(() => {});
-    return failures;
-  },
+  destroy: (event, paths) => files.destroy(paths, progressTo(event.sender)),
+  emptyTrash: (event) => files.emptyTrash(progressTo(event.sender)),
   readText: (_event, target) => files.readText(target),
   // A file open in a page of its own (Markdown, text, code): read, checked for outside changes, saved.
   docRead: (_event, target) => files.readDoc(target),
@@ -1224,7 +1212,12 @@ const api = {
     shownTerms.set(event.sender.id, shown);
     if (BrowserWindow.fromWebContents(event.sender)?.isFocused()) terminalSeen(shown);
   },
-  termWrite: (_event, id, data) => terminals.write(id, data),
+  termWrite: (_event, id, data) => {
+    // Enter may have just asked a room's AI for something. Not every key: an AI's screen also gets
+    // mouse moves and focus reports as input, which would keep the checks fast for nothing.
+    if (typeof data === 'string' && data.includes('\r') && terminals.roomOf(id)) agentAlerts.poke();
+    return terminals.write(id, data);
+  },
   termResize: (_event, id, cols, rows) => terminals.resize(id, cols, rows),
   termKill: (_event, id) => terminals.end(id),
   termOthers: (_event, name, tab) => terminals.othersRunning(name, tab),
@@ -1543,6 +1536,7 @@ app.whenReady().then(() => {
     webContents,
   });
   obscuraApp.setGuard(aiBrowserApp.allowed);
+  obscuraApp.setAiPage(aiBrowserApp.isAiPage);
   try {
     house.ensureRules();
   } catch (error) {

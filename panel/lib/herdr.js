@@ -99,9 +99,20 @@ function run(command, args) {
   });
 }
 
-// Every terminal tab still running in one room, in order, with its panes.
-async function roomTabs(name) {
-  if (!NAME.test(name || '')) throw new Error('Not a valid project name.');
+// Every terminal tab still running in one room, in order, with its panes. The AI alerts and the
+// Agents page both ask every few seconds, so one trip into the room is shared for a moment.
+const recentTabs = new Map(); // room name -> { at, asked }
+function roomTabs(name) {
+  if (!NAME.test(name || '')) return Promise.reject(new Error('Not a valid project name.'));
+  const recent = recentTabs.get(name);
+  if (recent && Date.now() - recent.at < 1500) return recent.asked;
+  const asked = readRoomTabs(name);
+  recentTabs.set(name, { at: Date.now(), asked });
+  asked.catch(() => recentTabs.delete(name)); // a failure is never kept
+  return asked;
+}
+
+async function readRoomTabs(name) {
   const out = await run('docker', ['exec', roomName(name), 'sh', '-c', ROOM_SCRIPT]);
   const tabs = [];
   for (const line of out.split('\n').slice(0, 200)) {

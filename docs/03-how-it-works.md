@@ -532,8 +532,10 @@ never left out. What belongs to the thing clicked comes after a line.
     and types it in with `insertText`, so Ctrl+Z undoes it. A box also gets
     Undo and Redo. Password boxes never copy.
   - **Terminals** (`term.js`): Copy what's picked, Paste the same way as
-    Ctrl+V (a Windows picture pastes as a file path), Select All. In a room
-    terminal a plain drag belongs to Herdr, so menu Copy needs a Shift+drag.
+    Ctrl+V (a Windows picture pastes as a file path), Select All. A plain drag
+    always highlights, even when the program wants the mouse (Herdr, Claude):
+    `dragAlwaysSelects` holds the press and sends it as a Shift press once
+    the mouse moves; a click without moving still goes to the program.
   - **Anywhere else**: Copy for words picked on the page, Select All for text
     you can pick (a chat, a preview, an output box).
 - The menu keeps the typing spot where it was (its `mousedown` is cancelled),
@@ -645,18 +647,25 @@ are hidden while it's in front, and come back exactly as they were.
   hides in a narrow page with the other extras. Turn it on by hand:
   `window.house.call('obscuraDark', true)` in Station's page, or set
   `"darkSites": true` under `prefs` in `~/.config/house/panel.json`.
-- **One Chrome identity** (2026-11-13, fixes Google's "this browser may not be
-  secure"): every browser page says "Chrome <version> on Linux" everywhere.
-  `lib/obscura.js` `identify` attaches the page's debugger (the same one dark
-  sites uses; re-attached if let go) and sends `Emulation.setUserAgentOverride`
-  (user-agent, `navigator.userAgentData` brands and full list, platform stays
-  Linux) and `Page.addScriptToEvaluateOnNewDocument` (fills `window.chrome` with
-  `app`, `csi`, `loadTimes`, `runtime`; needs `Page.enable`). The session gets
-  the same user-agent. Electron sends no `Sec-CH-UA` headers at all, so
-  `onBeforeSendHeaders` adds them on https and localhost (full version list only
-  after a site asks with `Accept-CH`; no retry for `Critical-CH`). If the
-  debugger can't attach the page still loads, with Electron's own look. Checked
-  by the `obscuraIdentity` scene.
+- **One honest identity** (2026-11-13): every browser page says "Chromium
+  <version> on Linux", which is true, the same in the headers and in the page.
+  An earlier version claimed "Google Chrome" and faked `window.chrome` extras;
+  Google sign-in still failed, and Google's rule is that a browser must not pose
+  as Chrome, so nothing is faked now. `lib/obscura.js` `identify` attaches the
+  page's debugger (the same one dark sites uses; re-attached if let go) and
+  sends `Emulation.setUserAgentOverride` (user-agent, `navigator.userAgentData`
+  brands Chromium + Not?A_Brand, platform Linux). The session gets the same
+  user-agent. Electron sends no `Sec-CH-UA` headers at all, so
+  `onBeforeSendHeaders` adds the same brands on https and localhost (full
+  version list only after a site asks with `Accept-CH`). Checked by the
+  `obscuraIdentity` scene.
+- **Sign-in popups** (2026-11-13): `window.open` with a size ("Sign in with
+  Google" and the like) opens a real popup window, because the page that opened
+  it waits for it to answer (`window.opener`), which a separate tab can't do. It
+  shares the tab's session and gets the same wall (`LOCKED`, `guestHook`). A
+  link or a plain `window.open` is still a new tab, and a page an AI is using
+  never gets a popup (its requests must stay inside the AI's address wall).
+  Checked by the `obscuraIdentity` scene.
 - `lib/obscura.js`, `renderer/obscura-tab.js`. Checked by the `obscura` and
   `obscuraAttacks` scenes (every way out of the tab, tried against a hostile
   made-up site).
@@ -901,7 +910,9 @@ A room is one container per project:
 - only that one project folder mounted
 - on the `house-rooms` network
 - a per-project Claude config volume, with the login token shared from
-  `~/.config/house/claude-token`
+  `~/.config/house/claude-token`. Station never deletes this volume (it holds
+  the project's chat history), not even when the project is deleted for good
+  (`node panel/test/keep-ai-history.test.js` checks this)
 - `claude-managed.json` mounted in as Claude's managed settings, so house rules
   apply inside the room
 

@@ -26,7 +26,7 @@ cd ~/house
 Panel unit checks (plain node, nothing real touched), from `~/house/panel`:
 
 ```bash
-for t in agent-alerts ai-rules pasted-image preview docx protect-home github schedule schedule-runner search jev tokens; do node test/$t.test.js | tail -1; done
+for t in agent-alerts ai-rules pasted-image preview docx protect-home github schedule schedule-runner search jev tokens keep-ai-history resources; do node test/$t.test.js | tail -1; done
 test/music-run.sh   # the Song page's checks; it makes its own throwaway home under /tmp
 ```
 

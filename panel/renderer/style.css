@@ -2136,6 +2136,8 @@ body.obscura-front .app { grid-template-rows: 40px minmax(0, 1fr); } /* the hidd
 .main:not(.pair) > .pair-grip { display: none; }
 .ob-bar .ob-btn.on { background: var(--strip-hover); }
 .tab.paired:not(.active) { background: var(--strip-hover); }
+/* A browser tab that is asleep (obscura-tab.js sleepObscura) looks a little faded, as in Chrome. */
+.tab.asleep:not(.active) > :is(i, img, span) { opacity: .55; }
 /* Two Files halves: the one in front has a blue line along its top, and the other half's picks are gray. */
 .content.half-on { box-shadow: inset 0 2px 0 var(--blue); }
 .content.half-off :is(.row, .home-recent-row).selected::before, .content.half-off .tile.selected, .content.half-off .tile.selected:hover { background: var(--nav-selected); box-shadow: inset 0 0 0 1px var(--line); }

@@ -1097,6 +1097,7 @@ function activateTab(tab) {
     other.el.classList.toggle('paired', other === mate);
     if (other.host) other.host.hidden = !shown.includes(other);
     if (other.host) other.host.inert = other.host.hidden; // so a tab drawn out of sight (an AI's) can't take the keyboard
+    if (other.asleep && !other.host.hidden) wakeObscura(other); // a sleeping browser tab shown beside this one
   });
   layoutPair(tab, mate);
   tab.el.scrollIntoView({ inline: 'nearest', block: 'nearest' }); // the open tab stays in view when the strip scrolls
@@ -4620,7 +4621,7 @@ function dropArea() {
 
 // Checked often, and only sent when something changed, since the list moves with the window.
 function sendDropArea() {
-  const box = dropArea();
+  const box = document.hidden ? null : dropArea(); // a window out of sight takes no drops
   const now = JSON.stringify([box, state.status.doorOpen]);
   if (now === dropAreaSent) return;
   dropAreaSent = now;
@@ -5879,12 +5880,15 @@ function otherView(view) {
     });
   }
   let checking = false;
-  setInterval(async () => {
+  const check = async () => {
     if (checking) return;
     checking = true;
     await refreshStatus();
     checking = false;
-  }, 3000);
+  };
+  // A window you can't see (minimized, or hidden behind the tray) doesn't ask; it catches up when shown.
+  setInterval(() => { if (!document.hidden) check(); }, 3000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) check(); });
 }());
 
 // Used only by the automated self-test.
