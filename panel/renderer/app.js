@@ -714,9 +714,12 @@ window.house.on('tabs:gap', ({ x }) => {
     setTimeout(() => { if (!tabSlot.classList.contains('open')) tabSlot.remove(); }, 160);
     return;
   }
+  // Tabs after the gap are judged as if it weren't there: it pushes them right, and counting that
+  // would make the gap hold back from every spot but the first (a tab's right half counted as its left).
   const before = [...tabsEl.querySelectorAll('.tab')].find((other) => {
     const box = other.getBoundingClientRect();
-    return box.left + box.width / 2 > x;
+    const pushed = tabSlot.isConnected && tabSlot.compareDocumentPosition(other) & Node.DOCUMENT_POSITION_FOLLOWING ? tabSlot.offsetWidth : 0;
+    return box.left - pushed + box.width / 2 > x;
   }) || newTabButton;
   if (tabSlot.nextElementSibling !== before || !tabSlot.isConnected) {
     const was = [...tabsEl.querySelectorAll('.tab')].map((other) => [other, other.getBoundingClientRect().left]);
@@ -1447,6 +1450,7 @@ async function closeTab(tab) {
   if (tab.kind === 'llama') closeLlama(); // llama-tab.js
   // Only the owner closing a Preview tab ends its site; moving, splitting, sleeping or a reload never come here.
   if (tab.kind === 'obscura' && tab.previewOf && !tab.previewOf.startsWith('file:')) call('previewStop', tab.previewOf).catch(() => {});
+  tab.closedByOwner = true; // only these come back with Ctrl+Shift+T, not tabs moved to another window
   removeTab(tab);
 }
 
@@ -5017,7 +5021,7 @@ function aiToolsSection() {
   const box = el('div', 'ai-tools');
   box.append(el('h3', 'rules-group', 'Your AI tools'));
   box.append(el('p', 'rules-note', data.chosen === null
-    ? 'None chosen yet. Station 256 installs no AI for you: tick the ones you use and only those are set up in your rooms.'
+    ? 'None chosen yet. Tick the AIs you use: only those are set up in your rooms.'
     : 'Only the ones ticked are set up in your rooms. You sign in to each one yourself.'));
   data.tools.forEach((tool) => {
     const row = el('label', 'rule ai-tool');

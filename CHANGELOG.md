@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.5.1
+
+### Added
+
+- **The web browser's right-click menu fits what you clicked,** like other browsers. On a link: Open Link in New Tab, Open Link in Split View, Copy Link Address, Copy Link Text and Save Link As. On a picture: Open, Save, Copy and Copy Image Address. On a video or audio: Play/Pause, Mute, Loop, Show Controls, Open, Save and Copy Address. On picked words: Copy and Search Google (and Go to the address, if it is one). In a text box: spelling suggestions and Add to Dictionary, then Undo, Redo, Cut, Copy, Paste, Paste as Plain Text and Select All. On the page itself: Back, Forward, Reload, Print and Copy Page Address. Inspect is at the end of every menu.
+- **Ctrl+Shift+T** reopens the last browser tab you closed. A tab you moved to another window doesn't count.
+- **Ctrl+P** prints the page.
+- **Full-screen video,** and **F11** for the page. It fills the Station window; Esc leaves.
+- **PDFs open in the browser tab** instead of only downloading.
+
+### Changed
+
+- **Copy buttons on websites work.** A page can now put text on the clipboard when you click its Copy button (sign-in codes, for example). Pages still can't read your clipboard.
+- **Scene tests run fully invisible.** They no longer show a window or turn the screen black, and they never touch your real clipboard or the Windows helper's port.
+
+### Fixed
+
+- **Sign-ins that send you back to "localhost".** When a sign-in page (Claude's, for example) hands its code to a program in a room on a localhost address, the browser now connects to that room and tries again instead of showing "refused". If nothing is listening there, it says so and offers to open the link in your Windows browser.
+- **Copy and paste between Windows and Station.** Station now remembers what you last copied in Windows, so a copy the Windows-Linux link dropped still pastes. Copies made inside web pages reach Windows too. Whatever you copied last, wherever, is what pastes.
+- **Dragging a tab back into a window.** The drop spot lagged behind the mouse, so a tab from another window seemed to land only on the left. The tabs now slide apart under the mouse and the tab lands where you let go.
+
 ## 1.5.0
 
 ### Added

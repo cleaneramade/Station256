@@ -22,6 +22,8 @@ const ONE_TAB_LEFT = `(async () => {
 const SCENES = {
   // Obscura, the browser tab: every way out of it, tried against a made-up web server (test/obscura-scene.js).
   obscura: require('./obscura-scene'),
+  // A site with its own right-click menu: Station's stays shut (test/sitemenu-scene.js).
+  ...require('./sitemenu-scene'),
   // The same tab against a hostile site: escapes, windows, permissions, downloads, keys (test/obscura-attacks.js).
   obscuraAttacks: require('./obscura-attacks'),
   // The browser tab looks like one real Chrome on Linux everywhere: headers, JS, window.chrome (test/obscura-identity.js).

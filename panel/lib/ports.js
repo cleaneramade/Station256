@@ -191,6 +191,20 @@ async function reach(room, port) {
   return ready;
 }
 
+// A page was refused on localhost:port (a login's callback, say). The room and house port that reach the
+// running room listening on it, with a path opened right now, or null if no running room does.
+async function reachListener(port) {
+  if (!(port >= 1024 && port <= 65535)) return null;
+  const open = await require('./house').rooms().catch(() => null);
+  for (const room of open || []) {
+    const name = String(room.name);
+    if (!/^[A-Za-z0-9._ -]+$/.test(name)) continue;
+    const found = await portsOf(name);
+    if (found && found.has(port)) return reach(name, port).then((housePort) => ({ room: name, housePort }), () => null);
+  }
+  return null;
+}
+
 // Which room ports have a path, and where: for tests and for showing them.
 const list = () => [...forwards.values()].filter((forward) => !forward.ended)
   .map(({ room, port, housePort }) => ({ room, port, housePort }));
@@ -222,4 +236,4 @@ async function portsOf(room) {
   }
 }
 
-module.exports = { start, stop, reach, list, listening, poll, portsOf, houseSites };
+module.exports = { start, stop, reach, list, listening, poll, portsOf, houseSites, reachListener };

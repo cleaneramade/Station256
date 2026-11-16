@@ -10,10 +10,14 @@
 const { app, BrowserWindow, screen, session, webContents } = require('electron');
 const fs = require('fs');
 const path = require('path');
+const sharedClipboard = require('./clipboard');
 
 const PARTITION = 'persist:obscura';
 // The only thing a page may use without asking. (The editor's own list is in lib/editor-app.js.)
 const PERMITTED = new Set(['fullscreen']);
+// Copy buttons ("Copy code") write the clipboard; Chromium grants this only after a click. Never reading it,
+// and never for a page an AI is driving.
+const pageMay = (contents, permission) => PERMITTED.has(permission) || (permission === 'clipboard-sanitized-write' && !!contents && !aiPage(contents.id));
 // The one thing the owner may allow, site by site: what a page asks for -> what the owner sees.
 const MEDIA = { audio: 'microphone', video: 'camera' };
 const ASK_MS = 60000; // a question nobody answers in a minute counts as no (and is not remembered)
@@ -135,12 +139,12 @@ function start({ homeDir, siteAccess: access }) {
   // No permissions, except the microphone and camera when the owner said yes for that site (mediaAllowed).
   // Everything else (notifications, location, clipboard, the screen) is refused, not asked, not "granted" by a check.
   ses.setPermissionRequestHandler((contents, permission, callback, details) => {
-    if (permission !== 'media') { callback(PERMITTED.has(permission)); return; }
+    if (permission !== 'media') { callback(pageMay(contents, permission)); return; }
     mediaAllowed(contents, details).then(callback, () => callback(false));
   });
   // The quiet check never asks: it only repeats a saved yes, with the same limits as above.
   ses.setPermissionCheckHandler((contents, permission, origin, details) => {
-    if (permission !== 'media') return PERMITTED.has(permission);
+    if (permission !== 'media') return pageMay(contents, permission);
     // origin is Chromium's requestingOrigin string; originOf makes a trailing slash or full URL match the store key.
     const kind = MEDIA[details?.mediaType];
     const site = originOf(origin);
@@ -227,10 +231,10 @@ function browserKey(input) {
   if (input.type !== 'keyDown') return false;
   const key = String(input.key);
   const lower = key.toLowerCase();
-  if (key === 'F5') return true;
+  if (key === 'F5' || key === 'F11') return true;
   if (input.alt && !input.control && !input.meta) return key === 'ArrowLeft' || key === 'ArrowRight';
   if (!input.control) return false;
-  return ['l', 'r', 'f', 'w', 't', '+', '=', '-', '_', '0', 'Tab'].includes(lower === 'tab' ? 'Tab' : lower);
+  return ['l', 'r', 'f', 'w', 't', 'p', '+', '=', '-', '_', '0', 'Tab'].includes(lower === 'tab' ? 'Tab' : lower);
 }
 
 // One honest identity for every page: Chromium <major> on Linux, which is what Obscura is. The
@@ -303,6 +307,27 @@ function guestHook(guest, popup = false) {
     event.preventDefault();
     notify(guest, { kind: 'blocked', url });
   };
+  // A login ends by sending the browser to http://localhost:PORT/callback..., a short-lived server in a
+  // room that the paths (lib/ports.js) may not have caught yet. Refused: open the path now and try once more.
+  let retried = '';
+  let original = ''; // the address as the page sent it, which is what Windows gets
+  guest.on('did-fail-load', async (_event, code, _text, url, isMainFrame) => {
+    if (code !== -102 || !isMainFrame) return; // -102: connection refused
+    let target;
+    try { target = new URL(url); } catch { return; }
+    if (target.protocol !== 'http:' || !/^(localhost|127\.0\.0\.1)$/.test(target.hostname)) return;
+    const gaveUp = (room) => {
+      console.log(`[station] localhost callback refused: port ${target.port}, room listener: ${room}`);
+      if (!guest.isDestroyed()) notify(guest, { kind: 'refused', url: original || target.href });
+    };
+    if (retried === url) { gaveUp('retry failed'); return; }
+    retried = url;
+    original = url;
+    const found = await require('./ports').reachListener(Number(target.port)).catch(() => null);
+    if (!found || guest.isDestroyed()) { if (!found) gaveUp('none'); return; }
+    target.port = String(found.housePort);
+    guest.loadURL(target.href).catch(() => {});
+  });
   guest.on('will-navigate', (event, url) => stay(event, url));
   guest.on('will-redirect', (event, url) => stay(event, url));
   guest.on('will-frame-navigate', (event) => {
@@ -310,6 +335,13 @@ function guestHook(guest, popup = false) {
     else if (!frameMayGoTo(event.url)) event.preventDefault();
   });
   guest.on('before-input-event', (event, input) => {
+    // The page copies and pastes by itself; Windows hears of a copy, and a paste never uses a stale one.
+    if (input.type === 'keyDown' && input.control && !input.alt && !input.meta && /^[cxv]$/i.test(input.key)) {
+      if (input.key.toLowerCase() === 'v') {
+        const text = input.shift ? null : sharedClipboard.windowsInstead();
+        if (text) { event.preventDefault(); guest.insertText(text); }
+      } else setTimeout(() => sharedClipboard.shareNative().catch(() => {}), 150);
+    }
     if (!popup && input.type === 'keyDown' && input.key === 'Escape') notify(guest, { kind: 'esc' }); // closes a menu left open
     if (popup || !browserKey(input)) return; // a popup has no tab to take the keys
     event.preventDefault();
@@ -318,9 +350,10 @@ function guestHook(guest, popup = false) {
   // Ctrl and the mouse wheel: the tab zooms this page (obscura-tab.js), the same as Ctrl + and Ctrl -.
   guest.on('zoom-changed', (_event, direction) => notify(guest, { kind: 'zoom', direction: direction === 'in' ? 1 : -1 }));
   // Right-click: the tab draws Station's own menu (obscura-tab.js) from what was under the pointer.
-  // Only web links are passed on; the page's own words for them never are.
+  // Only web addresses are passed on; the tab picks the menu's items from the rest.
   guest.on('context-menu', (_event, p) => {
     const flags = p.editFlags || {};
+    const web = (url) => (/^https?:\/\//i.test(url || '') ? String(url).slice(0, 4096) : '');
     // Where the mouse is in Station's own page: the page's x and y don't say, since Station's zoom
     // and the page's zoom both stretch them. The mouse is read from the screen instead.
     let at = null;
@@ -336,11 +369,12 @@ function guestHook(guest, popup = false) {
     } catch { /* the page's own spot is used below */ }
     notify(guest, {
       kind: 'menu', at, x: Number(p.x) || 0, y: Number(p.y) || 0, zoom: guest.hostWebContents?.getZoomFactor?.() || 1,
-      media: p.mediaType === 'image' ? 'image' : '', editable: !!p.isEditable,
-      src: /^https?:\/\//i.test(p.srcURL || '') ? String(p.srcURL).slice(0, 4096) : '',
-      link: /^https?:\/\//i.test(p.linkURL || '') ? String(p.linkURL).slice(0, 4096) : '',
+      media: ['image', 'video', 'audio'].includes(p.mediaType) ? p.mediaType : '', editable: !!p.isEditable,
+      src: web(p.srcURL), link: web(p.linkURL), page: web(p.pageURL), linkText: String(p.linkText || '').slice(0, 300),
       words: String(p.selectionText || '').slice(0, 1 << 20),
-      canCut: !!flags.canCut, canPaste: !!flags.canPaste, canSelectAll: flags.canSelectAll !== false,
+      flags: { ...flags, ...p.mediaFlags },
+      misspelled: String(p.misspelledWord || '').slice(0, 100),
+      suggestions: (p.dictionarySuggestions || []).slice(0, 5).map((word) => String(word).slice(0, 100)),
     });
   });
   // The tab's picture: fetched here, as the page would, and handed over as a small data: picture
@@ -391,6 +425,7 @@ function guardAttach(event, webPreferences, params) {
     // No "let this site see a folder" (showOpenFilePicker, showDirectoryPicker, showSaveFilePicker):
     // a page never gets a handle on house files. An ordinary upload button still works.
     disableBlinkFeatures: 'FileSystemAccessLocal',
+    plugins: true, // Chromium's own PDF viewer, so a PDF opens in the tab instead of downloading
   });
   params.allowpopups = false; // no popup windows: a page's request for one is turned into a new tab by guestHook
   // Without this Electron drops the request before guestHook hears of it. The hook always answers

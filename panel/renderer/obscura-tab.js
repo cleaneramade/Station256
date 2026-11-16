@@ -130,6 +130,7 @@ function openObscura(url = null, background = false) {
   const view = document.createElement('webview');
   view.className = 'ob-view';
   view.setAttribute('partition', OBSCURA_PARTITION);
+  view.setAttribute('allowfullscreen', ''); // a page's video can go full screen (see enter-html-full-screen below)
   view.setAttribute('src', url || 'about:blank');
   const message = el('div', 'ob-message');
   // The AI's cursor (a second pointer with its name), the ripple where it presses, and a soft glow
@@ -248,6 +249,19 @@ function aiGlide(tab, to, doing) {
 function showObscuraMessage(tab, title, text) {
   tab.message.replaceChildren(el('h2', 'ob-message-title', title), el('p', 'ob-message-text', text));
   tab.message.hidden = false;
+}
+
+// A login's last step went to a program on this PC that isn't listening: offer Windows' browser or another try.
+function showRefusedLocal(tab, url) {
+  const where = new URL(url).host;
+  const open = el('button', 'btn', 'Open in Windows browser');
+  open.addEventListener('click', () => call('openLinkInWindows', url).catch((error) => obscuraNote(tab, error.message)));
+  const again = el('button', 'btn', 'Try again');
+  again.addEventListener('click', () => { tab.message.hidden = true; try { tab.view.loadURL(url); } catch { /* not ready */ } });
+  showObscuraMessage(tab, `Nothing is listening at ${where}`, 'If that program runs in Windows, open this link there.');
+  const row = el('div', 'ob-message-buttons');
+  row.append(open, again);
+  tab.message.append(row);
 }
 
 // The sites a new tab offers: the ones visited most (kept in the app's prefs, like its other small
@@ -630,6 +644,9 @@ function hookObscura(tab) {
       applyObscuraZoom(tab);
     } catch { /* gone */ }
   });
+  // Full screen fills Station's window: the tab strip and toolbar hide (style.css), Esc leaves it.
+  view.addEventListener('enter-html-full-screen', () => document.body.classList.add('ob-full'));
+  view.addEventListener('leave-html-full-screen', () => document.body.classList.remove('ob-full'));
   view.addEventListener('found-in-page', (event) => {
     const { activeMatchOrdinal, matches } = event.result;
     tab.findCount.textContent = matches ? `${activeMatchOrdinal} of ${matches}` : 'No matches';
@@ -638,6 +655,7 @@ function hookObscura(tab) {
     if (!event.isMainFrame || event.errorCode === -3) return; // -3: the page was changed before it finished
     const where = obscuraHost(event.validatedURL || tab.url);
     if (!/^https?:\/\//i.test(event.validatedURL || '')) return;
+    if (event.errorCode === -102 && /^http:\/\/(localhost|127\.0\.0\.1)[:/]/i.test(event.validatedURL)) return; // lib/obscura.js tries a room's path first, then sends 'refused'
     setObscuraTitle(tab, where, null); // the tab is named for the site, not for the page before it
     if (OBSCURA_NO_NETWORK.has(event.errorCode)) {
       showObscuraMessage(tab, 'Can\'t reach this page', event.errorCode === -105 || event.errorCode === -106 || event.errorCode === -137
@@ -663,55 +681,91 @@ function hookObscura(tab) {
   tab.findBar.querySelectorAll('button')[2].addEventListener('click', () => closeObscuraFind(tab));
 }
 
-// A right-click in the page (lib/obscura.js passes it on): the same four as everywhere, then the
-// browser's own. The page's spot is counted from the page's top left corner.
+// A right-click in the page (lib/obscura.js passes it on): Station's menu, picked by what was
+// clicked, in Chrome's order. Each group shows only when it applies, with a rule between groups.
+// The page's spot is counted from the page's top left corner.
 function obscuraMenu(tab, event) {
   const box = tab.view.getBoundingClientRect();
   const view = tab.view;
-  const items = [];
+  const flags = event.flags || {};
   const web = (url) => /^https?:\/\//i.test(url || '');
   // Where the mouse is in Station's page: main reads it from the screen. If that isn't inside the
   // page (some displays don't say where the mouse is), the page's own spot is used, in Station's pixels.
   const near = event.at && event.at.x >= box.left && event.at.x <= box.right && event.at.y >= box.top && event.at.y <= box.bottom;
   const at = near ? event.at : { x: box.left + event.x / (event.zoom || 1), y: box.top + event.y / (event.zoom || 1) };
   const doIt = (what, a, b) => call('obscuraDo', tab.wcId, what, a, b).catch(() => {});
-  if (event.link) {
-    items.push(
-      { label: 'Open Link in New Tab', icon: 'tab_add', run: () => openInObscura(event.link) },
-      { label: 'Copy Link Address', icon: 'link', run: () => call('clipboardWrite', event.link) },
-      '-',
-    );
-  }
-  if (event.media === 'image') {
-    items.push(
-      { label: 'Open Image in New Tab', icon: 'tab_add', disabled: !web(event.src), run: () => openInObscura(event.src) },
-      { label: 'Save Image', icon: 'save', disabled: !web(event.src), run: () => doIt('saveImage', event.src) },
-      { label: 'Copy Image', icon: 'image', run: () => doIt('copyImage', event.x, event.y) },
-      { label: 'Copy Image Address', icon: 'link', disabled: !web(event.src), run: () => call('clipboardWrite', event.src) },
-      '-',
-    );
-  }
-  if (event.words.trim() && !event.editable) {
-    const shown = event.words.trim().replace(/\s+/g, ' ');
-    items.push(
-      { label: `Search Google for "${shown.length > 24 ? `${shown.slice(0, 23)}…` : shown}"`, icon: 'search', run: () => openInObscura(`https://www.google.com/search?q=${encodeURIComponent(shown.slice(0, 300))}`) },
-      '-',
-    );
-  }
-  items.push(
-    { label: 'Back', icon: 'arrow_left', disabled: !view.canGoBack(), run: () => view.goBack() },
-    { label: 'Forward', icon: 'arrow_right', disabled: !view.canGoForward(), run: () => view.goForward() },
-    { label: 'Reload', icon: 'arrow_clockwise', run: () => reloadObscura(tab) },
-    '-',
-    { label: 'Print…', run: () => { try { view.print(); } catch { /* not ready */ } } },
-    { label: 'Inspect', icon: 'code', run: () => { try { view.inspectElement(Math.round(event.x), Math.round(event.y)); } catch { /* not ready */ } } },
-  );
-  rightClickMenu(at.x, at.y, {
-    cut: event.canCut ? () => view.cut() : null,
-    copy: event.words ? () => call('clipboardWrite', event.words) : null,
-    paste: event.canPaste ? () => view.paste() : null,
-    selectAll: event.canSelectAll ? () => view.selectAll() : null,
-  }, items);
+  const copyText = (text) => () => call('clipboardWrite', text);
+  const newTab = (url) => () => openInObscura(url);
+  const words = event.words.trim().replace(/\s+/g, ' ');
+  // A selection that is one web address (or looks like one) can be gone to.
+  const looksLikeUrl = words && !/\s/.test(words) && words.length < 2000 && /^(https?:\/\/\S+|[\w-]+(\.[\w-]+)+(\/\S*)?)$/i.test(words);
+  const kind = { image: 'Image', video: 'Video', audio: 'Audio' }[event.media];
+  const spot = { x: event.x, y: event.y };
+  const nothingSpecial = !event.link && !event.media && !words && !event.editable;
+  const here = (label, icon, run, more = {}) => ({ label, icon, run, ...more });
+  const groups = [
+    // Link
+    event.link && [
+      here('Open Link in New Tab', 'tab_add', newTab(event.link)),
+      here('Open Link in Split View', 'panel_right', () => { const added = openInObscura(event.link); if (added) pairTabs(added, tab, 'right'); }),
+      here('Copy Link Address', 'link', copyText(event.link)),
+      event.linkText.trim() && here('Copy Link Text', 'copy', copyText(event.linkText.trim())),
+      here('Save Link As', 'save', () => doIt('download', event.link)),
+    ],
+    // Image
+    event.media === 'image' && [
+      here('Open Image in New Tab', 'tab_add', newTab(event.src), { disabled: !web(event.src) }),
+      here('Save Image As', 'save', () => doIt('download', event.src), { disabled: !web(event.src) }),
+      here('Copy Image', 'image', () => doIt('copyImage', event.x, event.y)),
+      here('Copy Image Address', 'link', copyText(event.src), { disabled: !web(event.src) }),
+    ],
+    // Video and audio
+    kind && event.media !== 'image' && [
+      here(flags.isPaused ? 'Play' : 'Pause', flags.isPaused ? 'play' : 'pause-filled', () => doIt('media', 'play', spot)),
+      here(flags.isMuted ? 'Unmute' : 'Mute', flags.isMuted ? 'speaker' : 'speaker_off', () => doIt('media', 'mute', spot), { disabled: flags.hasAudio === false }),
+      here('Loop', 'arrow_clockwise', () => doIt('media', 'loop', spot), { checked: !!flags.isLooping }),
+      flags.canToggleControls && here('Show Controls', 'content_view', () => doIt('media', 'controls', spot), { checked: !!flags.isControlsVisible }),
+      here(`Open ${kind} in New Tab`, 'tab_add', newTab(event.src), { disabled: !web(event.src) }),
+      here(`Save ${kind} As`, 'save', () => doIt('download', event.src), { disabled: !web(event.src) }),
+      here(`Copy ${kind} Address`, 'link', copyText(event.src), { disabled: !web(event.src) }),
+    ],
+    // Spelling, then the editing commands, in a box you can type in
+    event.editable && event.misspelled && [
+      ...event.suggestions.map((word) => here(word, '', () => view.replaceMisspelling(word))),
+      here('Add to Dictionary', 'add', () => doIt('addWord', event.misspelled)),
+    ],
+    event.editable && [
+      here('Undo', 'arrow_undo', () => view.undo(), { disabled: !flags.canUndo }),
+      here('Redo', 'arrow_redo', () => view.redo(), { disabled: !flags.canRedo }),
+    ],
+    event.editable && [
+      here('Cut', 'cut', () => { view.cut(); setTimeout(() => call('clipboardShare'), 150); }, { disabled: !flags.canCut }),
+      here('Copy', 'copy', copyText(event.words), { disabled: !event.words }),
+      here('Paste', 'clipboard_paste', () => call('clipboardRead').then((text) => (text ? view.insertText(text) : view.paste()), () => view.paste()), { disabled: !flags.canPaste }),
+      here('Paste as Plain Text', 'clipboard_paste', () => view.pasteAndMatchStyle(), { disabled: !flags.canPaste }),
+      here('Select All', 'select_all_on', () => view.selectAll(), { disabled: flags.canSelectAll === false }),
+    ],
+    // Words picked on the page
+    words && !event.editable && [
+      here('Copy', 'copy', copyText(event.words)),
+      here(`Search Google for "${words.length > 30 ? `${words.slice(0, 30)}…` : words}"`, 'search', newTab(`https://www.google.com/search?q=${encodeURIComponent(words.slice(0, 300))}`)),
+      looksLikeUrl && here(`Go to ${words.length > 40 ? `${words.slice(0, 40)}…` : words}`, 'arrow_up_right', newTab(/^https?:/i.test(words) ? words : `https://${words}`)),
+    ],
+    // The page itself: only when nothing more particular was clicked
+    nothingSpecial && [
+      here('Back', 'arrow_left', () => view.goBack(), { disabled: !view.canGoBack() }),
+      here('Forward', 'arrow_right', () => view.goForward(), { disabled: !view.canGoForward() }),
+      here('Reload', 'arrow_clockwise', () => reloadObscura(tab)),
+    ],
+    nothingSpecial && [
+      here('Print…', '', () => { try { view.print(); } catch { /* not ready */ } }),
+      event.page && here('Copy Page Address', 'link', copyText(event.page)),
+    ],
+    [here('Inspect', 'code', () => { try { view.inspectElement(Math.round(event.x), Math.round(event.y)); } catch { /* not ready */ } })],
+  ];
+  const items = [];
+  groups.filter(Boolean).forEach((group) => items.push(...(items.length ? ['-'] : []), ...group.filter(Boolean)));
+  openMenu(at.x, at.y, items);
 }
 
 function reloadObscura(tab, hard = false) {
@@ -732,18 +786,24 @@ function closeObscuraFind(tab) {
   tab.view.focus();
 }
 
+// The last tabs the owner closed ({ url, title }), newest last, for Ctrl+Shift+T.
+const closedObscura = [];
+
 // The browser's keys. Returns true when it was one of them. F5 and Ctrl+R reload THE PAGE; Station's
 // own Ctrl+R (start the window again) never runs inside Obscura.
 function obscuraKey(tab, { key, ctrl, shift, alt }) {
   const lower = String(key).toLowerCase();
   if (key === 'F5' || (ctrl && lower === 'r')) { reloadObscura(tab, ctrl && shift); return true; }
+  if (key === 'F11') { tab.view.executeJavaScript('document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()', true).catch(() => {}); return true; }
   if (alt && !ctrl && key === 'ArrowLeft') { if (tab.view.canGoBack()) tab.view.goBack(); return true; }
   if (alt && !ctrl && key === 'ArrowRight') { if (tab.view.canGoForward()) tab.view.goForward(); return true; }
   if (!ctrl) return false;
   if (lower === 'l') { tab.input.focus(); return true; }
   if (lower === 'f') { openObscuraFind(tab); return true; }
   if (lower === 'w') { closeTab(tab); return true; }
+  if (lower === 't' && shift) { const last = closedObscura.pop(); if (last) openInObscura(last.url); return true; }
   if (lower === 't') { openObscura(); return true; }
+  if (lower === 'p') { try { tab.view.print(); } catch { /* not ready */ } return true; }
   if (lower === 'd') { toggleBookmark(tab); return true; }
   if (lower === 'h') { showObscuraList(tab, 'history'); return true; }
   if (key === 'Tab') { cycleTab(shift ? -1 : 1); return true; }
@@ -780,6 +840,7 @@ window.house.on('obscura:event', (event) => {
   else if (event.kind === 'note' && typeof event.note === 'string') obscuraNote(tab, event.note);
   else if (event.kind === 'access') askAccess(event);
   else if (event.kind === 'access-over') { if (accessOpen === event.ask) dialog.close(); else accessOver.add(event.ask); } // main gave up: close its dialog, or skip it if still queued
+  else if (event.kind === 'refused' && /^http:\/\//i.test(event.url || '')) showRefusedLocal(tab, event.url);
   else if (event.kind === 'blocked') obscuraNote(tab, 'The browser only opens web pages (http and https).');
   else if (event.kind === 'favicon' && /^data:image\//.test(event.src || '')) {
     setObscuraTitle(tab, tab.el.querySelector('.tab-title').textContent, event.src);
@@ -1008,6 +1069,9 @@ function showObscura(tab) {
 function closeObscura(tab) {
   if (tab.closed) return;
   tab.closed = true;
+  document.body.classList.remove('ob-full');
+  if (tab.closedByOwner && /^https?:\/\//i.test(tab.url) && !tab.aiOf) closedObscura.push({ url: tab.url, title: tab.el.querySelector('.tab-title')?.textContent || '' });
+  if (closedObscura.length > 20) closedObscura.shift();
   clearTimeout(tab.noteTimer);
   clearTimeout(tab.aiBannerTimer);
   tab.host.remove();
@@ -1024,4 +1088,4 @@ function obscuraDescription(tab) {
   return { kind: 'obscura', url, preview, ai: tab.aiOf ? { project: tab.aiOf, session: tab.aiSession || '' } : null }; // main only lets this through for a reload, never another window
 }
 
-window.houseTest = Object.assign(window.houseTest || {}, { showSiteAccess, sleepCheck, aiAtWork, aiGlide, aiResting, zoomObscura, hostZoom, pageScale: () => pageScale, openInObscura, openObscura, obscuraAddress, setObscuraInfo, stopAiBrowser, rememberObscuraVisit, toggleBookmark, showObscuraList, bookmarks: () => obscuraBookmarks, history: () => obscuraHistory, ready: () => obscuraSitesReady() });
+window.houseTest = Object.assign(window.houseTest || {}, { showSiteAccess, sleepCheck, aiAtWork, aiGlide, aiResting, zoomObscura, hostZoom, pageScale: () => pageScale, openInObscura, openObscura, closedObscura, obscuraAddress, setObscuraInfo, stopAiBrowser, rememberObscuraVisit, toggleBookmark, showObscuraList, bookmarks: () => obscuraBookmarks, history: () => obscuraHistory, ready: () => obscuraSitesReady() });

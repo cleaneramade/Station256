@@ -170,6 +170,34 @@ module.exports = {
         report(await page('!houseTest.state.tabs.some((x) => x === window.__t.mover)'), 'the terminal is gone from the first window');
         for (const w of others()) await w.webContents.executeJavaScript("window.close()").catch(() => {});
       }
+      // (d2) A tab from another window over this strip: the gap follows the pointer to any spot, and it lands there.
+      await reset('home');
+      await page('(async () => { for (let i = 0; i < 2; i += 1) { document.getElementById("new-tab").click(); await new Promise((r) => setTimeout(r, 400)); } return true; })()');
+      const gapAt = async (frac) => {
+        const x = await page(`(() => { const r = houseTest.state.tabs[Number(${frac} | 0)].el.getBoundingClientRect(); return r.left + r.width * ${frac % 1 || 0.5}; })()`);
+        win.webContents.send('tabs:gap', { x });
+        await sleep(500);
+        return page(`[...document.querySelectorAll('.tabs > *')].findIndex((n) => n.classList.contains('tab-slot'))`);
+      };
+      const three = await page('houseTest.state.tabs.length');
+      // Over tab 3's right half the gap must sit after it, once it has already opened further left.
+      const first = await gapAt(0.25);
+      const third = await gapAt(2.75);
+      const farRight = await page(`(() => { const r = houseTest.state.tabs[2].el.getBoundingClientRect(); return r.right + 30; })()`);
+      win.webContents.send('tabs:gap', { x: farRight });
+      await sleep(500);
+      const last = await page(`[...document.querySelectorAll('.tabs > *')].findIndex((n) => n.classList.contains('tab-slot'))`);
+      report(three === 3 && first === 0 && third === 3 && last === 3, `gap follows the pointer: left of tab 1 (${first}), after tab 3 (${third}), far right (${last})`);
+      await gapAt(1.5);
+      win.webContents.send('tab:arrive', { tab: { kind: 'files', path: 'home:', back: [], forward: [] } });
+      await sleep(900);
+      report(await page(`houseTest.state.tabs.length === 4 && [...document.querySelectorAll('.tabs > .tab')].indexOf(houseTest.state.tabs[2].el) === 2 && !document.querySelector('.tab-slot') && houseTest.state.tabs.every((t, i) => t.el === document.querySelectorAll('.tabs > .tab')[i])`), 'let go over the 3rd spot, the arriving tab lands 3rd');
+      win.webContents.send('tabs:gap', { x: await page(`document.querySelectorAll('.tabs > .tab')[3].getBoundingClientRect().right + 30`) });
+      await sleep(500);
+      win.webContents.send('tab:arrive', { tab: { kind: 'files', path: 'home:', back: [], forward: [] } });
+      await sleep(900);
+      report(await page(`houseTest.state.tabs.length === 5 && document.querySelector('.tabs').children[document.querySelector('.tabs').children.length - 2] === houseTest.state.tabs[4].el`), 'let go at the far right, it lands last');
+
       // (e) Tab onto a neighbour on the strip: held ~450 ms over its middle it pairs; a quick pass over its outer quarter only reorders.
       await reset('home');
       await page('houseTest.openTerminal({ cwd: houseTest.state.home }).then((t) => { window.__t.term = t; return true; })');

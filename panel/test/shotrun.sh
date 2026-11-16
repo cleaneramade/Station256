@@ -2,8 +2,11 @@
 # Takes pictures of the panel with test/shots.js, in a window that is never shown, with a throwaway
 # HOME so real settings and the open app are untouched. Pictures go to /tmp/house-shots/out.
 #   shotrun.sh [scene,scene...]
-# A fake "herdr" or "docker" can go first on PATH by setting SHOT_PATH. Canvases draw through Mesa's
-# d3d12 driver, as with start.sh.
+# Runs fully headless (Chromium's headless Ozone, software drawing): no window is ever made on your
+# screen, so nothing flashes. SHOT_VISIBLE=1 runs it on the real display instead, for watching/debugging
+# (then canvases draw through Mesa's d3d12 driver, as with start.sh). SHOT_SCREEN=WIDTH,HEIGHT sets the
+# pretend screen size (default 1920,1080). It also hides DISPLAY/WAYLAND_DISPLAY, so it cannot reach the screen.
+# A fake "herdr" or "docker" can go first on PATH by setting SHOT_PATH.
 # While real rooms are open, always name the scenes, or set SHOT_PATH=panel/test/stub (from ~/house): with no list,
 # the agents scenes ask the real Docker and look inside every open room, including the user's.
 set -e
@@ -45,5 +48,12 @@ docker: Error response from daemon: failed to create task for container: failed 
 LOG
 echo '{"zoomLevel":1,"window":{"rect":{"x":60,"y":40,"w":1240,"h":800},"maximized":false},"navPane":{"width":172,"collapsed":false},"viewMode":"details"}' > "$FAKE/.config/house/panel.json"
 # HOUSE_CLEANUP=0: a test copy never starts the daily clean-up by itself (the cleanup scene presses the button).
-GALLIUM_DRIVER="${GALLIUM_DRIVER:-d3d12}" HOME="$FAKE" PATH="${SHOT_PATH:+$SHOT_PATH:}$PATH" NO_AT_BRIDGE=1 HOUSE_SHOTS="$FAKE/out" HOUSE_SHOTS_SCENES="${1:-}" HOUSE_CLEANUP="${HOUSE_CLEANUP:-0}" \
-  timeout "${SHOT_TIMEOUT:-180}" node_modules/electron/dist/electron . ${SHOT_ARGS:-} 2>/dev/null | grep -E '^(SHOT|FAIL|PASS|INFO|DONE|COPIED)'
+if [ -n "${SHOT_VISIBLE:-}" ]; then
+  MODE=(); export GALLIUM_DRIVER="${GALLIUM_DRIVER:-d3d12}"
+else
+  unset DISPLAY WAYLAND_DISPLAY # no way to reach the real screen at all
+  MODE=(--ozone-platform=headless --disable-gpu "--ozone-override-screen-size=${SHOT_SCREEN:-1920,1080}")
+fi
+export HOUSE_LINK_PORT="${HOUSE_LINK_PORT:-$((47300 + RANDOM % 500))}" # never the real helper port 47256
+HOME="$FAKE" PATH="${SHOT_PATH:+$SHOT_PATH:}$PATH" NO_AT_BRIDGE=1 HOUSE_SHOTS="$FAKE/out" HOUSE_SHOTS_SCENES="${1:-}" HOUSE_CLEANUP="${HOUSE_CLEANUP:-0}" \
+  timeout "${SHOT_TIMEOUT:-180}" node_modules/electron/dist/electron . "${MODE[@]}" ${SHOT_ARGS:-} 2>/dev/null | grep -E '^(SHOT|FAIL|PASS|INFO|DONE|COPIED)'

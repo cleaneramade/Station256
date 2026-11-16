@@ -206,7 +206,7 @@ module.exports = async function obscuraAttacks({ page, shot, sleep, win }) {
     report(second !== wc && second.session === wc.session && p2.sandbox === true && p2.nodeIntegration === false && p2.contextIsolation === true && p2.webviewTag === false && !p2.preload && g2 === 'undefined,undefined,undefined' && third && windows() === windowsBefore, `a tab opened by a page is shut in like the first, and its own window.open is a tab too (${windows()})`);
     await closeExtras();
 
-    // ---- 3. Permissions. (Nothing here writes the clipboard or opens a file chooser.)
+    // ---- 3. Permissions. (Clipboard WRITE after a click is allowed on purpose, and checked in obscura-scene.js; reading is not.)
     const asked = await g(`(async () => {
       const wait = (p) => Promise.race([p, new Promise((done) => setTimeout(() => done('timeout'), 3000))]);
       const out = {};
@@ -221,7 +221,7 @@ module.exports = async function obscuraAttacks({ page, shot, sleep, win }) {
       out.serial = navigator.serial ? await wait(navigator.serial.requestPort().then(() => 'GRANTED', (e) => e.name)) : 'none';
       out.pickers = [typeof showOpenFilePicker, typeof showDirectoryPicker, typeof showSaveFilePicker].join();
       out.query = [];
-      for (const name of ['geolocation', 'notifications', 'camera', 'microphone', 'clipboard-read', 'clipboard-write', 'midi', 'persistent-storage']) out.query.push(await navigator.permissions.query({ name }).then((s) => s.state, () => 'n/a'));
+      for (const name of ['geolocation', 'notifications', 'camera', 'microphone', 'clipboard-read', 'midi', 'persistent-storage']) out.query.push(await navigator.permissions.query({ name }).then((s) => s.state, () => 'n/a'));
       out.query = out.query.join();
       return out; })()`);
     report(!/GRANTED|granted/.test(JSON.stringify(asked)) && asked.notification === 'denied', `every permission and device request is refused ${JSON.stringify(asked)}`);
@@ -319,12 +319,12 @@ module.exports = async function obscuraAttacks({ page, shot, sleep, win }) {
     await wc.loadURL(`${base}/ok`);
     const allTabs = () => page(`houseTest.state.tabs.map((t) => t.kind).join()`);
     const tabsBefore = await allTabs();
-    for (const key of [{ keyCode: 'L', modifiers: ['alt'] }, { keyCode: 'F11' }, { keyCode: 'F12' }, { keyCode: 'I', modifiers: ['control', 'shift'] }, { keyCode: 'J', modifiers: ['control', 'shift'] }, { keyCode: 'N', modifiers: ['control'] }]) {
+    for (const key of [{ keyCode: 'L', modifiers: ['alt'] }, { keyCode: 'F12' }, { keyCode: 'I', modifiers: ['control', 'shift'] }, { keyCode: 'J', modifiers: ['control', 'shift'] }, { keyCode: 'N', modifiers: ['control'] }]) {
       wc.sendInputEvent({ type: 'keyDown', ...key });
       wc.sendInputEvent({ type: 'keyUp', ...key });
     }
     await sleep(800);
-    report(!wc.isDevToolsOpened() && !win.webContents.isDevToolsOpened() && !win.isFullScreen() && windows() === windowsBefore && (await allTabs()) === tabsBefore && (await page(`window.__hostMark === 1`)), 'Alt+L, F11, F12, Ctrl+Shift+I, Ctrl+Shift+J, Ctrl+N in the page do nothing to Station; no devtools');
+    report(!wc.isDevToolsOpened() && !win.webContents.isDevToolsOpened() && !win.isFullScreen() && windows() === windowsBefore && (await allTabs()) === tabsBefore && (await page(`window.__hostMark === 1`)), 'Alt+L, F12, Ctrl+Shift+I, Ctrl+Shift+J, Ctrl+N in the page do nothing to Station; no devtools');
     // Ctrl + in the address bar zooms the page, and Station's zoom keys work again on a Files tab.
     const stationZoom = () => page(`window.devicePixelRatio`);
     const zoomBefore = await stationZoom();

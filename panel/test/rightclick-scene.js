@@ -24,7 +24,9 @@ module.exports = {
       const { webContents } = require('electron');
       const guest = selector === 'webview' ? webContents.getAllWebContents().find((item) => item.getType() === 'webview' && !item.isDestroyed()) : null;
       const target = guest || win.webContents;
-      const where = guest ? spot : at;
+      // The click is in the page's device pixels (zoomed), the spot in its CSS pixels.
+      const scale = guest ? await guest.executeJavaScript('devicePixelRatio') : 1;
+      const where = guest ? { x: Math.round(spot.x * scale), y: Math.round(spot.y * scale) } : at;
       target.sendInputEvent({ type: 'mouseDown', x: where.x, y: where.y, button: 'right', clickCount: 1 });
       target.sendInputEvent({ type: 'mouseUp', x: where.x, y: where.y, button: 'right', clickCount: 1 });
       await sleep(400);
@@ -141,17 +143,49 @@ module.exports = {
     const http = require('http');
     const site = await new Promise((resolve) => {
       const made = http.createServer((_request, response) => {
+        // A tiny PNG, for the page's pictures.
+        if (_request.url === '/pic.png') {
+          response.writeHead(200, { 'content-type': 'image/png' });
+          return response.end(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'));
+        }
         response.writeHead(200, { 'content-type': 'text/html' });
-        response.end('<body style="margin:0"><a href="http://127.0.0.1:9/next" style="display:block;height:200px;font-size:40px">a link</a><p style="height:400px">plain words</p></body>');
+        response.end('<body style="margin:0"><a href="http://127.0.0.1:9/next" style="display:block;height:100px;font-size:40px">a link</a><p style="height:400px">plain words</p>'
+          + '<img src="/pic.png" style="position:absolute;left:10px;top:120px;width:80px;height:80px">'
+          + '<a href="http://127.0.0.1:9/img" style="position:absolute;left:110px;top:120px"><img src="/pic.png" style="width:80px;height:80px;display:block"></a>'
+          + '<video src="/none.mp4" controls style="position:absolute;left:210px;top:120px;width:200px;height:80px"></video>'
+          + '<p id="sel" style="position:absolute;left:430px;top:120px;margin:0;font-size:20px;white-space:nowrap">some picked words here</p>'
+          + '<textarea style="position:absolute;left:10px;top:230px;width:190px;height:60px"></textarea>'
+          + '<textarea id="typo" style="position:absolute;left:220px;top:230px;width:190px;height:60px" spellcheck="true">teh qick brwn</textarea></body>');
       });
       made.listen(0, '127.0.0.1', () => resolve(made));
     });
     await page(`(() => { houseTest.openInObscura('http://127.0.0.1:${site.address().port}/'); return true; })()`);
     await sleep(3000);
-    const onLink = await check('a link in the Web Browser', 'webview', ['Open Link in New Tab', 'Copy Link Address', 'Back', 'Reload'], { x: 60, y: 60 });
-    report(onLink && onLink[3] === 'Select All', 'Select All works in a page');
-    const onPage = await check('a page in the Web Browser', 'webview', ['Back', 'Forward', 'Reload'], { x: 60, y: 400 });
-    report(onPage && !onPage.includes('Copy Link'), 'plain space has no link items');
+    // The page's menu changes with what was clicked: the exact items for each kind of spot.
+    const pageGuest = require("electron").webContents.getAllWebContents().find((item) => item.getType() === 'webview' && !item.isDestroyed());
+    const webMenu = async (name, spot, want) => {
+      const shown = bare(await rightClick('webview', spot));
+      report(JSON.stringify(shown) === JSON.stringify(want), `page menu on ${name}: ${JSON.stringify(shown)}${JSON.stringify(shown) === JSON.stringify(want) ? '' : ` wanted ${JSON.stringify(want)}`}`);
+      return shown;
+    };
+    const link = ['Open Link in New Tab', 'Open Link in Split View', 'Copy Link Address', 'Copy Link Text', 'Save Link As'];
+    const picture = ['Open Image in New Tab', 'Save Image As', 'Copy Image', 'Copy Image Address'];
+    await webMenu('a link', { x: 60, y: 60 }, [...link, 'Inspect']);
+    await webMenu('a picture', { x: 50, y: 160 }, [...picture, 'Inspect']);
+    const linked = bare(await rightClick('webview', { x: 150, y: 160 }));
+    report(linked.slice(0, 3).join() === link.slice(0, 3).join() && picture.every((label) => linked.includes(label)) && linked.at(-1) === 'Inspect', `page menu on a linked picture has link and picture groups: ${JSON.stringify(linked)}`);
+    const video = await webMenu('a video', { x: 300, y: 140 }, ['Play', 'Mute', 'Loop', 'Open Video in New Tab', 'Save Video As', 'Copy Video Address', 'Inspect']);
+    await pageGuest.executeJavaScript(`getSelection().selectAllChildren(document.getElementById('sel')); true`);
+    await webMenu('picked words', { x: 480, y: 130 }, ['Copy', 'Search Google for "some picked words here"', 'Inspect']);
+    await pageGuest.executeJavaScript(`getSelection().removeAllRanges(); true`);
+    await webMenu('an empty text box', { x: 100, y: 260 }, ['Undo', 'Redo', 'Cut', 'Copy', 'Paste', 'Paste as Plain Text', 'Select All', 'Inspect']);
+    const typo = bare(await rightClick('webview', { x: 240, y: 245 }));
+    console.log(`INFO misspelled word menu (needs a spell-check dictionary): ${JSON.stringify(typo)}`);
+    report(typo.includes('Add to Dictionary') ? typo.at(-1) === 'Inspect' && typo.indexOf('Add to Dictionary') < typo.indexOf('Undo') : typo.includes('Undo'), 'a misspelled word puts spelling first (or, with no dictionary, the plain text-box menu shows)');
+    const state = await rightClick('webview', { x: 100, y: 260 });
+    report(state && state.filter((label) => label.startsWith('-')).length >= 3, `greyed items follow the box (empty: Undo, Redo, Cut, Copy off): ${JSON.stringify(state)}`);
+    const onPage = await webMenu('a blank page', { x: 60, y: 400 }, ['Back', 'Forward', 'Reload', 'Print…', 'Copy Page Address', 'Inspect']);
+    report(onPage.length > 0 && !onPage.includes('Cut'), 'plain space has no Cut, Copy, Paste or Select All');
     // The menu opens and stays inside the window, at each Station zoom. (Where the mouse really is
     // can't be faked: a sent click doesn't move the cursor, so that part is checked by hand.)
     const was0 = win.webContents.getZoomFactor();
@@ -278,7 +312,7 @@ module.exports = {
       // The click goes to Station's window, as the mouse does: it lands on the page under it.
       const realRight = async (p) => {
         const send = (event) => win.webContents.sendInputEvent({ ...event, x: Math.round(p.x * p.f) + (event.dx || 0), y: Math.round(p.y * p.f) });
-        for (let attempt = 1; attempt <= 3; attempt += 1) {
+        for (let attempt = 1; attempt <= 6; attempt += 1) { // headless drawing sometimes misses the first presses (main too)
           await page(`closeMenu(); true`);
           // A real mouse moves over the page first, so a page that has been clicked sees it arrive.
           send({ type: 'mouseMove', dx: 6 });
@@ -340,7 +374,9 @@ module.exports = {
         await page(`houseTest.closeTab(houseTest.state.active); true`);
         await sleep(600);
         await page(`houseTest.openInObscura('http://127.0.0.1:${site.address().port}/'); true`);
-        await sleep(3000);
+        // Software drawing (headless) can take longer than 3 s: wait for the page itself.
+        for (let wait = 0; wait < 50 && !(await page(`houseTest.state.active.kind === 'obscura' && houseTest.state.active.loading === false && !!houseTest.state.active.url`)); wait += 1) await sleep(200);
+        await sleep(1000);
         await tryCase('a browser tab', 'webview', { x: 120, y: 90 }, 'webview', { x: -40, y: 40 }, true);
         await tryCase('a browser tab', 'webview', { x: 120, y: 90 }, 'webview', { x: -40, y: 40 }, false);
         await page(ONE_TAB_LEFT_CODE);

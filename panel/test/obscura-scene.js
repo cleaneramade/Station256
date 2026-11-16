@@ -4,11 +4,12 @@ const fs = require('fs');
 const http = require('http');
 const os = require('os');
 const path = require('path');
-const { BrowserWindow, webContents } = require('electron');
+const { BrowserWindow, webContents, clipboard } = require('electron');
 
 const PAGES = {
   '/ok': '<title>Hello Obscura</title><h1>ok</h1>',
   '/popup': '<title>Popup page</title><p>popup</p>',
+  '/copy': '<title>Copy page</title><button id="b">copy</button><video id="v" width="100" height="60"></video>',
   '/links': '<title>Links</title><a id="f" href="file:///etc/passwd">f</a><a id="h" href="house-file:///etc/passwd">h</a><a id="c" href="myapp://x">c</a><a id="blank" target="_blank" href="/popup">b</a>',
 };
 
@@ -20,6 +21,11 @@ function server() {
       if (request.url === '/dl') {
         response.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Disposition': 'attachment; filename="../evil file.txt"' });
         response.end('downloaded');
+        return;
+      }
+      if (request.url === '/pdf') {
+        response.writeHead(200, { 'Content-Type': 'application/pdf' });
+        response.end(['%PDF-1.1', '1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj', '2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj', '3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj', 'trailer<</Root 1 0 R/Size 4>>', '%%EOF'].join('\n'));
         return;
       }
       const page = PAGES[request.url];
@@ -257,7 +263,7 @@ module.exports = async function obscura({ page, shot, sleep, win }) {
     await load('http://localhost:39999/');
     await waitFor(`!houseTest.state.active.message.hidden`, 15000);
     const refused = await page(`houseTest.state.active.message.hidden ? '' : houseTest.state.active.message.textContent`);
-    report(/didn't answer/.test(refused), `a site that isn't running shows a plain page: "${refused}"`);
+    report(/Nothing is listening/.test(refused), `a site that isn't running shows a plain page: "${refused}"`);
     const offline = await page(`(() => { const t = houseTest.state.active; const e = new Event('did-fail-load'); Object.assign(e, { isMainFrame: true, errorCode: -106, validatedURL: 'https://example.org/', errorDescription: 'ERR_INTERNET_DISCONNECTED' }); t.message.hidden = true; t.view.dispatchEvent(e); return t.message.textContent; })()`);
     const msg = offline;
     report(/The browser can't reach the internet from the house right now./.test(msg), `no internet shows the plain page: "${msg}"`);
@@ -400,6 +406,32 @@ module.exports = async function obscura({ page, shot, sleep, win }) {
     report(pagesCheck.barHeight >= 36, `the browser's bar is taller: ${Math.round(pagesCheck.barHeight)} px`);
     await page(`(() => { houseTest.history().length = 0; return true; })()`);
 
+    // Basics: a page may write the clipboard (after a click), never read it; full screen; PDF in the tab.
+    await page(`(() => { houseTest.openInObscura('${base}/copy'); return true; })()`);
+    await waitFor(`houseTest.state.active.loading === false && houseTest.state.active.url`);
+    await sleep(500);
+    clipboard.writeText('before');
+    (await guestOf()).focus();
+    await sleep(200);
+    const wrote = await inGuest(`navigator.clipboard.writeText('copied code 42').then(() => 'ok', (e) => e.name)`);
+    await sleep(500);
+    report(wrote === 'ok' && (await clipboard.readText()) === 'copied code 42', `a page can write the clipboard after a click (${wrote}, now "${await clipboard.readText()}")`);
+    const readBack = await inGuest(`navigator.clipboard.readText().then(() => 'GRANTED', (e) => e.name)`);
+    report(readBack !== 'GRANTED', `a page still cannot read the clipboard (${readBack})`);
+    await inGuest(`document.getElementById('v').requestFullscreen().then(() => 'ok', (e) => e.name)`);
+    await sleep(600);
+    console.log('INFO winFull', win.isFullScreen(), win.isSimpleFullScreen());
+    report(await page(`document.body.classList.contains('ob-full')`) && await page(`getComputedStyle(document.querySelector('.tabstrip')).display === 'none'`), 'a page in full screen hides the tab strip and toolbar');
+    await inGuest(`document.exitFullscreen().then(() => 'ok', (e) => e.name)`);
+    await sleep(600);
+    report(await page(`!document.body.classList.contains('ob-full')`), 'leaving full screen brings them back');
+    const docs = fs.existsSync(path.join(os.homedir(), 'Documents')) ? fs.readdirSync(path.join(os.homedir(), 'Documents')).length : 0;
+    await load(`${base}/pdf`);
+    await sleep(1500);
+    const inner = await inGuest(`document.contentType`);
+    const docsAfter = fs.existsSync(path.join(os.homedir(), 'Documents')) ? fs.readdirSync(path.join(os.homedir(), 'Documents')).length : 0;
+    report(/\/pdf$/.test(await page(`houseTest.state.active.url`)) && docsAfter === docs && inner === 'application/pdf', `a PDF opens in the tab, nothing downloaded (${inner})`);
+
     // Closing the tab frees its page.
     await page(`(() => { houseTest.openInObscura('${base}/ok'); return true; })()`);
     await waitFor(`houseTest.state.active.loading === false && houseTest.state.active.url`);
@@ -408,6 +440,15 @@ module.exports = async function obscura({ page, shot, sleep, win }) {
     await page(`(() => { houseTest.closeTab(houseTest.state.active); return true; })()`);
     await sleep(1500);
     report(count() < open, `closing the tab frees the webview (${open} -> ${count()}) ${description}`);
+    await page(`(() => { for (const t of [...houseTest.state.tabs]) if (t.kind === 'obscura') houseTest.closeTab(t); return true; })()`);
+    // Ctrl+Shift+T: the last closed tab comes back (the PDF page was last to close).
+    await page(`(() => { houseTest.openInObscura('${base}/ok'); return true; })()`);
+    await sleep(500);
+    await page(`(() => { houseTest.closeTab(houseTest.state.active); return true; })()`);
+    const stack = await page(`houseTest.closedObscura.length`);
+    await page(`(() => { houseTest.openObscura(); window.dispatchEvent(new KeyboardEvent('keydown', { key: 'T', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true })); return true; })()`);
+    await sleep(600);
+    report(await page(`houseTest.state.tabs.some((t) => t.kind === 'obscura' && t.url === '${base}/ok')`) && stack >= 1, `Ctrl+Shift+T reopens the last closed tab (stack ${stack})`);
     await page(`(() => { for (const t of [...houseTest.state.tabs]) if (t.kind === 'obscura') houseTest.closeTab(t); return true; })()`);
   } catch (error) {
     report(false, `scene stopped: ${error.stack || error.message}`);

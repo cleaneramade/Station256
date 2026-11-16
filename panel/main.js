@@ -162,6 +162,10 @@ let windowsPicture = false;
 // In checks, a stand-in for a picture copied in Windows.
 const picturesInChecks = { png: null };
 // Test copies (checks) never put a window on the real screen, unless SHOT_SHOW=1 asks to watch them.
+// Test copies keep copied text in memory: a hidden copy must never touch the real clipboard (it can
+// wedge WSLg's bridge). HOUSE_SHOTS_CLIPBOARD asks for the real one.
+const clipboardStandIn = process.env.HOUSE_SHOTS && !process.env.HOUSE_SHOTS_CLIPBOARD ? { text: '' } : null;
+const readClipboard = (why) => (clipboardStandIn ? clipboardStandIn.text : sharedClipboard.readText(why));
 const testCopy = () => Boolean(process.env.HOUSE_SHOTS || process.env.HOUSE_FITTEST || process.env.HOUSE_ZOOMWALK);
 const offScreen = () => Boolean((process.env.HOUSE_SHOTS || process.env.HOUSE_FITTEST) && !process.env.SHOT_SHOW);
 const copiedPicture = () => (process.env.HOUSE_SHOTS ? Promise.resolve(picturesInChecks.png) : windowsLink.clipboardImage());
@@ -993,6 +997,8 @@ const api = {
   extract: (event, target, mode) => archive.extract(target, mode, progressTo(event.sender)),
   archiveList: (_event, target) => archive.list(target),
   docxRead: (_event, target) => docx.read(target),
+  // A web link the owner chose to open in Windows' own browser (the page that found nothing listening).
+  openLinkInWindows: (_event, url) => (/^https?:\/\//i.test(String(url)) ? windowsLink.openUrl(url) : Promise.reject(new Error('Only web links open in Windows.'))),
   // Only for files the panel can't show itself. Windows reading a house file needs the door open.
   openInWindows: async (_event, target, pick) => {
     await files.assertDoorOpen();
@@ -1011,7 +1017,16 @@ const api = {
     const guest = Number.isInteger(id) ? webContents.fromId(id) : null;
     if (!guest || guest.isDestroyed() || !obscuraApp.owns(guest)) return;
     if (what === 'copyImage') guest.copyImageAt(Math.round(Number(a)) || 0, Math.round(Number(b)) || 0);
-    else if (what === 'saveImage' && /^https?:\/\//i.test(String(a))) guest.downloadURL(String(a)); // lands in Pictures (lib/obscura.js)
+    else if (what === 'download' && /^https?:\/\//i.test(String(a))) guest.downloadURL(String(a)); // lands in the right folder (lib/obscura.js)
+    else if (what === 'addWord' && typeof a === 'string' && a.length < 100) guest.session.addWordToSpellCheckerDictionary(a);
+    // The media element under the click: Electron has no call for it, so a small script runs in an isolated world.
+    else if (what === 'media' && ['play', 'mute', 'loop', 'controls'].includes(a)) {
+      const code = `(() => { const m = document.elementFromPoint(${Math.round(Number(b?.x)) || 0}, ${Math.round(Number(b?.y)) || 0})?.closest('video, audio');
+        if (!m) return; const on = '${a}';
+        if (on === 'play') { if (m.paused) m.play(); else m.pause(); } else if (on === 'mute') m.muted = !m.muted;
+        else if (on === 'loop') m.loop = !m.loop; else m.controls = !m.controls; })()`;
+      guest.executeJavaScriptInIsolatedWorld(1257, [{ code }]).catch(() => {});
+    }
   },
   // Sites running now, for the browser's "Open sites": rooms' (through their paths) and the house's own.
   openSites: () => [
@@ -1378,12 +1393,14 @@ const api = {
     return true;
   },
 
-  clipboardRead: () => clipboard.readText(),
+  clipboardRead: () => readClipboard('paste'),
+  // A page's own copy or cut (menu Cut, Ctrl+C): goes on to Windows (lib/clipboard.js).
+  clipboardShare: () => (clipboardStandIn ? null : sharedClipboard.shareNative()),
   // Ctrl+V in a terminal: the text copied, or, when the newest copy in Windows is a picture, the
   // path of a file holding it, saved where the terminal can reach it (lib/pasted-image.js).
   termPaste: async (_event, id) => {
     const png = windowsPicture ? await copiedPicture() : null;
-    if (!png) return clipboard.readText();
+    if (!png) return readClipboard('terminal paste');
     const room = terminals.roomOf(id);
     return room ? pastedImage.saveInRoom(room, png) : pastedImage.saveInHouse(png);
   },
@@ -1391,6 +1408,7 @@ const api = {
   // Either is newer than a picture copied in Windows, even before Windows says so.
   clipboardWrite: async (_event, text) => {
     windowsPicture = false;
+    if (clipboardStandIn) { clipboardStandIn.text = String(text); return { ok: true }; }
     const reply = await sharedClipboard.copyText(text);
     // Said once per time the Windows helper is away, not on every copy.
     if (reply?.ok === false && !toldNoHelper) toAll('clipboard:no-helper');
@@ -1594,6 +1612,7 @@ app.whenReady().then(() => {
   }
   app.on('browser-window-focus', (_event, win) => {
     lastFocused = win;
+    if (!clipboardStandIn) sharedClipboard.readText('focus').catch(() => {}); // a focused window may write what Windows copied
     terminalSeen(shownTerms.get(win.webContents.id));
     const before = helperWindow();
     focusOrder = [win, ...focusOrder.filter((other) => other !== win)];

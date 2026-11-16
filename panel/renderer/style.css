@@ -2047,6 +2047,7 @@ html.docking .app { opacity: 0; }
 .ob-message[hidden], .ob-note[hidden], .ob-find[hidden], .ob-load[hidden] { display: none; }
 .ob-logo { width: 88px; height: 88px; margin-bottom: 12px; object-fit: contain; }
 .ob-message-title { margin: 0; font-size: 20px; font-weight: 600; color: var(--text-chrome); }
+.ob-message-buttons { display: flex; gap: 8px; margin-top: 12px; }
 .ob-message-text { margin: 0; max-width: 460px; font-size: 14px; color: var(--text-muted); user-select: text; }
 .ob-home { justify-content: flex-start; overflow-y: auto; }
 .ob-home-inner { display: flex; flex-direction: column; align-items: center; gap: 24px; width: 100%; max-width: 760px; padding: 24px 0; margin: auto; }
@@ -2291,3 +2292,7 @@ h1.docx-h { font-size: 26px; } h2.docx-h { font-size: 20px; } h3.docx-h { font-s
 
 /* A tab held over another tab's middle: letting go puts them side by side. */
 .tab.tab-join { outline: 2px solid #006fc4; outline-offset: -2px; }
+
+/* A page's video in full screen: only the page shows, in Station's window */
+body.ob-full .tabstrip, body.ob-full .ob-bar, body.ob-full .ob-find { display: none; }
+body.ob-full .app { grid-template-rows: minmax(0, 1fr); }
