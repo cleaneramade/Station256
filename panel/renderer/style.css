@@ -670,6 +670,8 @@ html.col-sizing, html.col-sizing * { cursor: col-resize !important; }
 
 .crumb.plain { cursor: default; }
 .crumb.plain:hover { background: none; }
+.cmd.on { background: var(--view-on); }
+.cmd.on:hover { background: var(--hover); }
 .cmd:disabled { color: var(--text-off); }
 .cmd:disabled:hover { background: none; }
 
@@ -796,7 +798,7 @@ html.col-sizing, html.col-sizing * { cursor: col-resize !important; }
 
 /* Menus */
 .menu {
-  position: fixed;
+  position: absolute; /* inside .app, or inside the see-through layer over a dialog (both start at the top left corner of what they hold) */
   z-index: 40;
   min-width: 190px;
   padding: 4px;
@@ -1021,6 +1023,7 @@ html.col-sizing, html.col-sizing * { cursor: col-resize !important; }
 .proc-num { color: var(--text-muted); text-align: right; font-variant-numeric: tabular-nums; }
 .proc-head { height: 22px; color: var(--text-muted); font-size: 11px; }
 .proc-head:hover { background: none; }
+.proc-group { display: block; line-height: 22px; margin-top: 6px; }
 .proc-count { margin-left: 4px; color: var(--text-muted); font-size: 11px; }
 .sys-card { display: flex; gap: 12px; align-items: flex-start; padding: 12px; border-radius: 6px; background: #eef6fc; }
 .sys-card.sleepy { background: #f3f2f8; }
@@ -1142,6 +1145,9 @@ html.capturing { background: rgba(0, 0, 0, 0.004); }
   transform: none;
   transition: opacity 90ms linear;
 }
+
+/* The flyout is a grid of two columns, as in Windows 11. */
+.snap-bar.flyout { display: grid; grid-template-columns: repeat(2, 122px); gap: 16px; }
 
 .snap-group { position: relative; flex: none; width: 122px; height: 79px; }
 
@@ -2024,7 +2030,8 @@ html.docking .app { opacity: 0; }
 .ob-field { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; height: 28px; margin: 0 6px; padding: 0 6px 0 12px; border-radius: 16px; background: var(--field); border: 1px solid var(--line-bar); }
 .ob-field:focus-within { border-color: var(--blue); }
 .ob-address { flex: 1; min-width: 0; border: 0; outline: 0; background: none; color: var(--text-chrome); font: inherit; font-size: 14px; user-select: text; }
-.ob-lock { flex: none; width: 15px; height: 15px; color: var(--green); }
+.ob-lock { flex: none; width: 15px; height: 15px; color: var(--green); cursor: pointer; }
+.ob-access { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 4px 0; }
 .ob-lock.insecure { color: var(--orange); }
 .ob-load { flex: none; position: relative; height: 3px; overflow: hidden; background: var(--line); }
 .ob-load::after { content: ''; position: absolute; top: 0; bottom: 0; width: 35%; background: var(--blue); animation: ob-slide 1.1s ease-in-out infinite; }
@@ -2142,6 +2149,10 @@ body.obscura-front .app { grid-template-rows: 40px minmax(0, 1fr); } /* the hidd
 .content.half-on { box-shadow: inset 0 2px 0 var(--blue); }
 .content.half-off :is(.row, .home-recent-row).selected::before, .content.half-off .tile.selected, .content.half-off .tile.selected:hover { background: var(--nav-selected); box-shadow: inset 0 0 0 1px var(--line); }
 .content.half-off .selected .check { border-color: var(--text-muted); background: var(--text-muted); }
+/* Over a browser page while a right-click menu is open (html.menu-open, app.js): it takes the click that closes the menu. */
+.ob-shield { display: none; position: absolute; inset: 0; z-index: 6; }
+html.menu-open .ob-shield { display: block; }
+
 /* The page's zoom, where the project's name used to be. */
 .ob-zoom { flex: none; display: flex; align-items: center; height: 28px; border-radius: 14px; background: var(--field); border: 1px solid var(--line-bar); }
 .ob-zoom .tool { width: 28px; height: 26px; margin: 0; border-radius: 13px; }
@@ -2277,3 +2288,6 @@ h1.docx-h { font-size: 26px; } h2.docx-h { font-size: 20px; } h3.docx-h { font-s
 /* The dot on a tab while an AI is using it, in the AI orange, just before the move-to-window button. */
 .tab-ai-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: #d97757; animation: ob-pulse 1.4s ease-in-out infinite; }
 .tab-ai-dot[hidden] { display: none; }
+
+/* A tab held over another tab's middle: letting go puts them side by side. */
+.tab.tab-join { outline: 2px solid #006fc4; outline-offset: -2px; }

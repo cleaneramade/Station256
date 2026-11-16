@@ -63,7 +63,7 @@ let copyJob = null; // a copy, move or delete running right now, and the pages i
 let renaming = null; // a name being typed in place
 // Choices that are remembered: from the View menu, and whether the System panel's Activity list
 // is open, with the newest problem in it that was seen.
-const prefs = { checks: true, activityOpen: false, activitySeen: '', darkSites: false, folderViews: {} };
+const prefs = { checks: true, activityOpen: false, activitySeen: '', folderViews: {}, autoApprove: {} };
 
 /* ---------- Small dialogs ---------- */
 
@@ -188,6 +188,7 @@ menuLayer.addEventListener('close', () => {
 
 function closeMenu() {
   menu.hidden = true;
+  document.documentElement.classList.remove('menu-open'); // browser tabs' click catcher (style.css)
   if (menuLayer.open) menuLayer.close();
 }
 
@@ -216,9 +217,14 @@ function openMenu(x, y, items) {
     menu.append(row);
   });
   menu.hidden = false;
+  document.documentElement.classList.add('menu-open');
+  // x and y are where the mouse is in the page. The menu sits inside .app (or the layer over a
+  // dialog), so they are counted from that box's top left, and kept inside it.
+  const home = (menuLayer.open ? menuLayer : document.querySelector('.app')).getBoundingClientRect();
   const box = menu.getBoundingClientRect();
-  menu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - box.width - 4))}px`;
-  menu.style.top = `${Math.max(4, Math.min(y, window.innerHeight - box.height - 4))}px`;
+  const spot = (at, room, size) => (Number.isFinite(at) ? Math.max(4, Math.min(at, room - size - 4)) : 4);
+  menu.style.left = `${spot(x - home.left, home.width, box.width)}px`;
+  menu.style.top = `${spot(y - home.top, home.height, box.height)}px`;
 }
 
 function menuUnder(button, items) {
@@ -326,6 +332,10 @@ document.addEventListener('pointerdown', (event) => {
   closeMenu();
 }, true);
 window.addEventListener('blur', closeMenu);
+// Esc, the wheel, and switching tabs close it too (a click anywhere does, above; in a browser tab a
+// catcher over the page takes that click, see obscuraMenu).
+window.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !menu.hidden) closeMenu(); }, true);
+window.addEventListener('wheel', () => { if (!menu.hidden) closeMenu(); }, { capture: true, passive: true });
 
 /* ---------- Paths ---------- */
 
@@ -835,8 +845,32 @@ function addTabElement(tab, title) {
       mergeSide = partner() && overOther !== 'tabs' ? halfAt(point.clientX, point.clientY) : null;
       showSnapZones(mergeSide);
     };
+    // Held ~300 ms over the middle of another tab on the strip, the two will join when let go.
+    let joinTab = null, joinSide = 'right', joinWait = null, joinOver = null;
+    const joinOff = () => {
+      clearTimeout(joinWait);
+      joinOver = joinTab = null;
+      tabsEl.querySelectorAll('.tab-join').forEach((one) => one.classList.remove('tab-join'));
+    };
+    const mergeOnTab = (point) => {
+      const hit = state.tabs.find((one) => {
+        if (one === tab || !canPair(tab, one) || !one.el) return false;
+        const box = one.el.getBoundingClientRect();
+        return point.clientX > box.left + box.width / 4 && point.clientX < box.right - box.width / 4 && point.clientY >= box.top && point.clientY <= box.bottom;
+      });
+      if (hit) joinSide = point.clientX < hit.el.getBoundingClientRect().left + hit.el.offsetWidth / 2 ? 'left' : 'right';
+      if (hit === joinOver) return;
+      joinOff();
+      joinOver = hit;
+      if (!hit) return;
+      joinWait = setTimeout(() => {
+        joinTab = hit;
+        hit.el.classList.add('tab-join');
+      }, 300);
+    };
     const lift = (on) => {
       if (on === lifted) return;
+      if (on) joinOff();
       if (!on) {
         mergeSide = null;
         showSnapZones(null);
@@ -875,7 +909,8 @@ function addTabElement(tab, title) {
           hoverOthers();
           mergeHover(current);
         } else {
-          moveTabTo(node, current.clientX - grabX);
+          mergeOnTab(current);
+          if (!joinOver) moveTabTo(node, current.clientX - grabX);
         }
       },
       async end(_last, moved, cancelled) {
@@ -887,8 +922,12 @@ function addTabElement(tab, title) {
         else lift(false);
         node.classList.remove('tab-moving');
         node.style.transform = '';
+        const joinWith = joinTab && !letGo && !cancelled ? joinTab : null;
+        const joinAt = joinSide;
+        joinOff();
         if (!moved) return;
         sortTabs();
+        if (joinWith && pairTabs(tab, joinWith, joinAt)) return;
         const mate = partner();
         if (letGo && mergeSide && mate) {
           // Let go on a page: the two join, nothing moves to another window.
@@ -1086,6 +1125,7 @@ new ResizeObserver(fadeStrip).observe(tabsEl);
 new MutationObserver(fadeStrip).observe(tabsEl, { childList: true });
 
 function activateTab(tab) {
+  closeMenu();
   if (!preview.hidden) closePreview();
   const before = state.active;
   state.active = tab;
@@ -1274,6 +1314,29 @@ function showRoomFiles(name) {
   }
 }
 
+// Opens a folder in this Files tab, or, for a file, its folder with the file selected.
+function goToPlace({ path: target, isDir }) {
+  const folder = isDir ? target : target.replace(/\/[^/]*$/, '') || '/';
+  navigate(folder);
+  if (isDir) return;
+  state.selected = new Set([target]);
+  state.anchor = target;
+  state.active.revealSelected = true;
+}
+
+// A path clicked in a terminal: as View Files does, a Files tab already there, else the first one
+// takes you, else a new one opens.
+window.addEventListener('station:open-path', (event) => {
+  const { path: target, isDir } = event.detail;
+  const folder = isDir ? target : target.replace(/\/[^/]*$/, '') || '/';
+  const filesTabs = state.tabs.filter((tab) => tab.kind === 'files');
+  const here = filesTabs.find((tab) => tab.path === folder);
+  if (here) activateTab(here);
+  else if (filesTabs.length) activateTab(filesTabs[0]);
+  else openFilesTab(folder);
+  goToPlace(event.detail);
+});
+
 // Takes a tab out of this window. A terminal keeps running: only its view here goes. A page opened
 // from somewhere (House Rules) goes back there, if that tab is still here.
 function removeTab(tab) {
@@ -1382,6 +1445,8 @@ async function closeTab(tab) {
   if (tab.kind === 'song' && !await songMayClose(tab)) return; // changes not saved
   if (tab.kind === 'editor') await saveEditor(tab);
   if (tab.kind === 'llama') closeLlama(); // llama-tab.js
+  // Only the owner closing a Preview tab ends its site; moving, splitting, sleeping or a reload never come here.
+  if (tab.kind === 'obscura' && tab.previewOf && !tab.previewOf.startsWith('file:')) call('previewStop', tab.previewOf).catch(() => {});
   removeTab(tab);
 }
 
@@ -1416,7 +1481,14 @@ async function addMovedTab(incoming) {
   if (kind === 'editor' && typeof incoming.url === 'string') return openEditorAt(incoming.url);
   if (kind === 'obscura') {
     const url = /^https?:\/\//i.test(incoming.url) ? incoming.url : null;
-    if (!incoming.ai) return openObscura(url);
+    if (!incoming.ai) {
+      const page = openObscura(url);
+      if (page && incoming.preview) {
+        page.previewOf = incoming.preview;
+        setObscuraInfo({ project: incoming.preview }, page);
+      }
+      return page;
+    }
     // An AI's page coming back after a reload: behind, as it was made, and still its AI's.
     // Blank at first, and its address kept: the page loads once main knows this tab is the AI's
     // (the address wall only covers a tab it knows), when the AI next asks (obscura-tab.js).
@@ -1899,13 +1971,15 @@ function editAddress() {
   input.select();
   input.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') {
-      const typed = input.value.trim();
-      // C:\... goes to the Windows drive, which only opens while the Windows lock is open.
-      const onC = /^[Cc]:([\\/]|$)/.test(typed) && state.windows;
-      const typedPath = onC
-        ? `${state.windows}/${typed.slice(2).replaceAll('\\', '/')}`.replace(/\/+/g, '/').replace(/\/$/, '')
-        : typed.replace(/^[Ll]:[\\/]?/, '/').replaceAll('\\', '/');
-      navigate(typed.toLowerCase() === 'home' ? HOME_PAGE : typedPath);
+      // Pasted paths often come in quotes. The house works out L:\, C:\, \\wsl.localhost\, /workspace and ~.
+      const typed = input.value.trim().replace(/^["'`]+|["'`]+$/g, '').trim();
+      if (typed.toLowerCase() === 'home') navigate(HOME_PAGE);
+      else if (typed) {
+        call('resolvePath', typed, null, state.currentProject).then((place) => {
+          if (place) goToPlace(place);
+          else toast(/^[Cc]:/.test(typed) ? 'Windows (C:) is locked, or that place isn\'t there.' :'That place wasn\'t found.');
+        }, () => toast('That place wasn\'t found.'));
+      }
       input.blur();
       if (input.isConnected) renderAddress(); // the box closes even if it had lost focus
     }
@@ -2004,6 +2078,8 @@ function renderChrome() {
   // Another terminal needs a room to join. Until it's up, Open room does the same job.
   $('room-new-btn').hidden = !up;
   $('room-close-btn').hidden = !up;
+  $('room-auto-btn').hidden = !isRoomTerminal(tab);
+  paintAutoApprove(tab.room);
   // On a room terminal it closes just that one. From the project's files it closes them all.
   const oneRoom = isRoomTerminal(tab);
   $('room-close-label').textContent = oneRoom ? 'Close Room' : 'Close All Rooms';
@@ -2020,6 +2096,14 @@ function renderChrome() {
 
   syncCopyView();
   renderHouseNote();
+}
+
+// Auto-approve button: on or off for this room (prefs.autoApprove, saved per room).
+function paintAutoApprove(room) {
+  const on = prefs.autoApprove[room] === true;
+  $('room-auto-btn').classList.toggle('on', on);
+  $('room-auto-btn').setAttribute('aria-pressed', String(on));
+  setIcon($('room-auto-icon'), on ? 'checkbox_checked' : 'checkbox_unchecked');
 }
 
 function renderHouseNote() {
@@ -4251,7 +4335,7 @@ async function loadPrefs() {
   if (typeof saved.checks === 'boolean') prefs.checks = saved.checks;
   if (typeof saved.activityOpen === 'boolean') prefs.activityOpen = saved.activityOpen;
   if (typeof saved.activitySeen === 'string') prefs.activitySeen = saved.activitySeen;
-  prefs.darkSites = saved.darkSites === true;
+  if (saved.autoApprove && typeof saved.autoApprove === 'object') prefs.autoApprove = saved.autoApprove;
   if (saved.folderViews && typeof saved.folderViews === 'object') prefs.folderViews = saved.folderViews;
   showChecks();
 }
@@ -4560,6 +4644,14 @@ $('room-preview-btn').addEventListener('click', () => {
 });
 $('room-new-btn').addEventListener('click', () => {
   if (state.currentProject) openTerminal({ room: state.currentProject, cwd: state.currentFolder });
+});
+$('room-auto-btn').addEventListener('click', () => {
+  if (!isRoomTerminal(state.active)) return;
+  const room = state.active.room;
+  prefs.autoApprove[room] = prefs.autoApprove[room] !== true;
+  if (!prefs.autoApprove[room]) delete prefs.autoApprove[room];
+  paintAutoApprove(room);
+  call('setPrefs', { autoApprove: prefs.autoApprove }).catch(() => {});
 });
 $('room-close-btn').addEventListener('click', () => {
   if (isRoomTerminal(state.active)) closeOneRoom(state.active);
@@ -5210,20 +5302,22 @@ async function renderSystem(force = false) {
     frag.append(row);
   });
 
-  // Every copy of a program is one line. Only the busiest few show until you ask for all.
-  section('Programs', el('span', 'sys-title-note', 'busiest first'));
+  // Every copy of a program is one line. Ones you can end come first, then the ones Station 256
+  // and Linux need, under their own heading as in Task Manager. Only a few show until you ask.
+  section('Programs', el('span', 'sys-title-note', 'ones you can end first'));
   const table = el('div', 'proc-table');
   const head = el('div', 'proc-row proc-head');
   head.append(el('span', '', 'Name'), el('span', 'proc-num', 'CPU'), el('span', 'proc-num', 'Memory'), el('span', ''));
   table.append(head);
   const shown = showAllPrograms ? info.processes : info.processes.slice(0, 5);
-  shown.forEach((proc) => {
+  shown.forEach((proc, i) => {
+    if (!proc.canEnd && (i === 0 || shown[i - 1].canEnd)) table.append(el('div', 'proc-row proc-head proc-group', 'Station 256 and Linux need these'));
     const row = el('div', 'proc-row');
     row.title = `${proc.count === 1 ? 'Process' : `${proc.count} copies:`} ${proc.pids.slice(0, 3).join(', ')}${proc.pids.length > 3 ? '…' : ''}\nRun by ${proc.users.slice(0, 2).join(', ')}`;
     const name = el('span', 'proc-name', proc.command);
     if (proc.count > 1) name.append(el('span', 'proc-count', `×${proc.count}`));
     row.append(name, el('span', 'proc-num', `${proc.cpu.toFixed(0)}%`), el('span', 'proc-num', sizeMb(proc.memoryMb)));
-    if (proc.mine && proc.command !== 'electron') {
+    if (proc.canEnd) {
       const end = el('button', 'link-btn', 'End');
       end.title = proc.count > 1 ? `Stop all ${proc.count} copies` : 'Stop this program';
       end.addEventListener('click', async () => {
@@ -5424,6 +5518,19 @@ function renderAgents() {
     }
     page.append(block);
   });
+  // Sites Preview started in the background, each with a Stop.
+  const previews = Array.isArray(look?.previews) ? look.previews : [];
+  if (previews.length) {
+    const block = el('div', 'agents-room open');
+    block.append(el('div', 'agents-room-head', 'Previews'));
+    previews.forEach((site) => {
+      const top = el('div', 'agents-room-head');
+      top.append(el('span', 'agents-room-name', site.room), el('span', 'agents-room-state', `${site.folder || 'Top folder'} · port ${site.port}`),
+        agentsButton('Stop', 'checkbox_unchecked', 'tint-red', 'Stop this site', () => call('previewStop', site.room).catch(() => {})));
+      block.append(top);
+    });
+    page.append(block);
+  }
   const scroll = agentsView.scrollTop;
   agentsView.replaceChildren(page);
   agentsView.scrollTop = scroll;
@@ -5556,7 +5663,13 @@ async function closeThisWindow() {
   return confirmBox('Close this window?', `Closing stops what's running in ${which}.\nYour files are kept.`, 'Close', true);
 }
 
+// Closing the window for real (not moving its last tab out) also ends the sites its Preview tabs showed.
 window.houseFrame.beforeClose = async () => {
+  const ok = await askBeforeClose();
+  if (ok) state.tabs.filter((tab) => tab.kind === 'obscura' && tab.previewOf && !tab.previewOf.startsWith('file:')).forEach((tab) => call('previewStop', tab.previewOf).catch(() => {}));
+  return ok;
+};
+const askBeforeClose = async () => {
   if (windowInfo.count > 1) return closeThisWindow();
   const terminals = await call('termCount');
   const roomNames = state.status.rooms.map((room) => room.name);

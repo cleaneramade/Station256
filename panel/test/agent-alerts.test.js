@@ -54,6 +54,21 @@ const choices = [
   '   3. Type something.',
 ].join('\n');
 
+const working = '⏺ Running the tests...\n✻ Pondering…';
+// A multiple-choice question, the arrow on option `at`; marks lists which options say (Recommended).
+const pick = (at, marks = [2], extra = []) => [
+  '☐ Layout',
+  '',
+  'Which layout should the home page use?',
+  ...['Cards', 'List', 'Grid'].flatMap((name, i) => [
+    `${at === i + 1 ? '❯' : ' '} ${i + 1}. ${name}${marks.includes(i + 1) ? ' (Recommended)' : ''}`,
+    '     A short description.',
+  ]),
+  ...extra,
+  '',
+  'Enter to select · ↑/↓ to navigate · Esc to cancel',
+].join('\n');
+
 async function main() {
   // ---- Reading the question off the screen
   await check('a permission question can be answered', () => {
@@ -63,6 +78,25 @@ async function main() {
     assert.strictEqual(prompt.detail, 'npm install left-pad');
     assert.strictEqual(prompt.question, 'Do you want to proceed?');
     assert.strictEqual(prompt.yesPicked, true);
+  });
+  await check('a real v2.1.325 screen: no Tip line, the command between the dashed rules', () => {
+    const prompt = alerts.readPrompt([
+      ' Bash command',
+      ' Tip: auto mode handles these prompts for you — choose "switch to auto mode" below',
+      ' Update timestamp of x.txt',
+      '╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌',
+      ' touch /tmp/aa-test/x.txt',
+      '╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌',
+      ' Do you want to proceed?',
+      ' ❯ 1. Yes',
+      '   2. Yes, and always allow access to /tmp/aa-test from this project',
+      '   3. Yes, and switch to auto mode · auto mode handles these prompts for you',
+      '   4. No',
+      ' Esc to cancel · Tab to amend',
+    ].join('\n'));
+    assert.strictEqual(prompt.canAnswer, true);
+    assert.strictEqual(prompt.yesPicked, true);
+    assert.strictEqual(prompt.detail, 'touch /tmp/aa-test/x.txt');
   });
   await check('Yes is only picked when the arrow is on it', () => {
     assert.strictEqual(alerts.readPrompt(bash(2)).yesPicked, false);
@@ -86,6 +120,25 @@ async function main() {
     assert.strictEqual(prompt.canAnswer, false);
     assert.strictEqual(prompt.question, 'Which layout should the home page use?');
   });
+  await check('a menu with one (Recommended) option is read', () => {
+    const prompt = alerts.readPrompt(pick(1));
+    assert.deepStrictEqual(prompt.recommended, [2]);
+    assert.strictEqual(prompt.picked, 1);
+    assert.strictEqual(prompt.multi, false);
+    assert.strictEqual(prompt.choices.length, 3);
+    assert.strictEqual(prompt.canAnswer, false);
+    assert.strictEqual(alerts.readPrompt(pick(1)).fingerprint, alerts.readPrompt(pick(3)).fingerprint);
+  });
+  await check('a menu with tabs or tick boxes is multi', () => {
+    assert.strictEqual(alerts.readPrompt(`← ☐ Layout  ☐ Colour  ✔ Submit →\n${pick(1)}`).multi, true);
+    assert.strictEqual(alerts.readPrompt(pick(1).replace('Cards', '[ ] Cards')).multi, true);
+  });
+  await check('a past message you typed, shown with "> ", is no menu', () => {
+    const past = '> I want:\n> 1. First thing\n  2. Second thing\n\n⏺ Sure, working on it.\n✻ Pondering…';
+    assert.strictEqual(alerts.readPrompt(past).fingerprint, undefined);
+    assert.strictEqual(alerts.readPrompt(past.replace(/> /g, '❯ ')).fingerprint, undefined);
+    assert.strictEqual(alerts.readPrompt(pick(1).replace(/\nEnter to select.*$/, '')).fingerprint, undefined); // no footer
+  });
   await check('an empty or odd screen is never an answerable question', () => {
     assert.strictEqual(alerts.readPrompt('').canAnswer, false);
     assert.strictEqual(alerts.readPrompt(' Do you want to proceed?\n ❯ 1. Sure\n   2. Nope').canAnswer, false);
@@ -98,7 +151,7 @@ async function main() {
 
   // ---- The watcher, with a pretend Herdr
   const make = () => {
-    const world = { tabs: { SampleApp: [{ tab: 'tab-1', panes: [{ agent: 'claude', status: 'working', title: 'Fixing login', pane: 'w1:p1' }] }] }, screen: bash(), keys: [] };
+    const world = { tabs: { SampleApp: [{ tab: 'tab-1', panes: [{ agent: 'claude', status: 'working', title: 'Fixing login', pane: 'w1:p1' }] }] }, screen: working, ask: bash(), keys: [], auto: false, logs: [], onKey: null };
     const seen = { statuses: [], notes: [], gone: [], opened: [] };
     let looking = false;
     const watcher = alerts.create({
@@ -111,10 +164,17 @@ async function main() {
       read: {
         roomTabs: async (name) => world.tabs[name],
         screenOf: async () => world.screen,
-        pressKey: async (room, tab, pane, key) => { world.keys.push(`${room}/${tab}/${pane}/${key}`); return true; },
+        pressKey: async (room, tab, pane, key) => { world.keys.push(`${room}/${tab}/${pane}/${key}`); if (world.onKey) world.onKey(key); return true; },
       },
+      autoApprove: () => world.auto,
+      log: (line) => world.logs.push(line),
+      pause: 0,
     });
-    const set = (status) => { world.tabs.SampleApp[0].panes[0].status = status; };
+    // A blocked AI has its question on screen; the others don't.
+    const set = (status) => {
+      world.tabs.SampleApp[0].panes[0].status = status;
+      world.screen = status === 'blocked' ? world.ask : working;
+    };
     return { world, seen, watcher, set, look: (on) => { looking = on; } };
   };
 
@@ -205,7 +265,7 @@ async function main() {
   });
   await check('a question that isn\'t a permission one only offers Open', async () => {
     const { seen, watcher, set, world } = make();
-    world.screen = choices;
+    world.ask = choices;
     await watcher.tick();
     set('blocked');
     await watcher.tick();
@@ -264,6 +324,184 @@ async function main() {
     watcher.seen('SampleApp', 'tab-1');
     assert.ok(seen.gone.includes(seen.notes.at(-1).tag));
     assert.strictEqual(await watcher.answer(seen.notes.at(-1).id, 'open'), 'unknown');
+  });
+  await check('two different questions back to back both alert', async () => {
+    const { seen, watcher, set, world } = make();
+    await watcher.tick();
+    set('blocked');
+    await watcher.tick();
+    assert.strictEqual(seen.notes.length, 1);
+    world.screen = bash(1, 'rm -rf build'); // the tab never left blocked in between
+    await watcher.tick();
+    await watcher.tick();
+    assert.strictEqual(seen.notes.length, 2);
+    assert.ok(seen.notes[1].body.includes('rm -rf build'));
+  });
+  await check('two identical questions with an answer between both alert', async () => {
+    const { seen, watcher, set, world } = make();
+    await watcher.tick();
+    set('blocked');
+    await watcher.tick();
+    assert.strictEqual(await watcher.answer(seen.notes.at(-1).id, 'approve'), 'approved');
+    world.screen = working; // answered, and Herdr hasn't caught up yet
+    await watcher.tick();
+    world.screen = bash();
+    await watcher.tick();
+    assert.strictEqual(seen.notes.length, 2);
+  });
+  await check('the same question left standing alerts only once', async () => {
+    const { seen, watcher, set } = make();
+    await watcher.tick();
+    set('blocked');
+    for (let i = 0; i < 4; i += 1) await watcher.tick();
+    assert.strictEqual(seen.notes.length, 1);
+  });
+  await check('Herdr says working but a question is on screen: blocked, and alerts', async () => {
+    const { seen, watcher, world } = make();
+    await watcher.tick();
+    world.screen = bash(); // Herdr still says working
+    await watcher.tick();
+    assert.deepStrictEqual(seen.statuses.at(-1), { 'SampleApp\ttab-1': 'blocked' });
+    assert.strictEqual(seen.notes.length, 1);
+    assert.deepStrictEqual(seen.notes[0].buttons, ['approve', 'deny', 'open']);
+  });
+  await check('a past typed message while working: stays working, no notification', async () => {
+    const { seen, watcher, world } = make();
+    await watcher.tick();
+    world.screen = '> 1. First thing\n  2. Second thing\n\n✻ Pondering…';
+    await watcher.tick();
+    await watcher.tick();
+    assert.deepStrictEqual(seen.statuses.at(-1), { 'SampleApp\ttab-1': 'working' });
+    assert.strictEqual(seen.notes.length, 0);
+  });
+  await check('a permission question left in the scrollback above the input box: not blocked, nothing pressed', async () => {
+    const { seen, watcher, world } = make();
+    world.auto = true;
+    await watcher.tick();
+    world.screen = `${bash()}
+${RULE}
+> 
+${RULE}
+  ? for shortcuts`;
+    await watcher.tick();
+    await watcher.tick();
+    assert.strictEqual(alerts.readPrompt(world.screen).canAnswer, false);
+    assert.deepStrictEqual(seen.statuses.at(-1), { 'SampleApp	tab-1': 'working' });
+    assert.deepStrictEqual(world.keys, []);
+    assert.strictEqual(seen.notes.length, 0);
+  });
+  await check('a plain > is not the picked mark', () => {
+    assert.strictEqual(alerts.readPrompt(bash().replace('❯', '>')).yesPicked, false);
+  });
+  await check('the same question auto-answered twice and back again: you are told', async () => {
+    const { seen, watcher, set, world } = make();
+    world.auto = true;
+    const real = Date.now;
+    let now = real();
+    Date.now = () => now;
+    try {
+      await watcher.tick();
+      set('blocked'); // the screen never changes: the answer doesn't take
+      for (let i = 0; i < 4; i += 1) {
+        await watcher.tick();
+        now += 9000; // past the repeat time, so the standing question counts as new
+      }
+    } finally {
+      Date.now = real;
+    }
+    assert.deepStrictEqual(world.keys, ['SampleApp/tab-1/w1:p1/enter', 'SampleApp/tab-1/w1:p1/enter']);
+    assert.ok(seen.notes.length >= 1);
+  });
+  await check('auto-approve off: a question just notifies', async () => {
+    const { seen, watcher, set, world } = make();
+    await watcher.tick();
+    set('blocked');
+    await watcher.tick();
+    assert.strictEqual(seen.notes.length, 1);
+    assert.deepStrictEqual(world.keys, []);
+  });
+  await check('auto-approve on: Yes is pressed, no notification, one log line', async () => {
+    const { seen, watcher, set, world } = make();
+    world.auto = true;
+    await watcher.tick();
+    set('blocked');
+    await watcher.tick();
+    await watcher.tick();
+    assert.deepStrictEqual(world.keys, ['SampleApp/tab-1/w1:p1/enter']); // not twice
+    assert.strictEqual(seen.notes.length, 0);
+    assert.strictEqual(world.logs.length, 1);
+  });
+  await check('auto-approve works while you\'re looking at that tab', async () => {
+    const { watcher, set, world, look } = make();
+    world.auto = true;
+    look(true);
+    await watcher.tick();
+    set('blocked');
+    await watcher.tick();
+    assert.deepStrictEqual(world.keys, ['SampleApp/tab-1/w1:p1/enter']);
+  });
+  await check('auto-approve with the arrow off Yes: nothing is pressed, you are told', async () => {
+    const { seen, watcher, set, world } = make();
+    world.auto = true;
+    world.ask = bash(2);
+    await watcher.tick();
+    set('blocked');
+    await watcher.tick();
+    assert.deepStrictEqual(world.keys, []);
+    assert.strictEqual(seen.notes.length, 1);
+  });
+  // A pretend menu: Down and Up move the arrow on the screen.
+  const menu = (start, marks) => {
+    const test = make();
+    let at = start;
+    test.world.auto = true;
+    test.world.onKey = (key) => {
+      if (key === 'down') at += 1;
+      if (key === 'up') at -= 1;
+      test.world.screen = pick(at, marks);
+    };
+    test.world.ask = pick(at, marks);
+    return test;
+  };
+  await check('auto-approve: one (Recommended) option is picked and confirmed', async () => {
+    const { seen, watcher, set, world } = menu(1, [3]);
+    await watcher.tick();
+    set('blocked');
+    await watcher.tick();
+    assert.deepStrictEqual(world.keys.map((key) => key.split('/').pop()), ['down', 'down', 'enter']);
+    assert.strictEqual(seen.notes.length, 0);
+  });
+  await check('auto-approve: the arrow can move up to it too', async () => {
+    const { watcher, set, world } = menu(3, [1]);
+    await watcher.tick();
+    set('blocked');
+    await watcher.tick();
+    assert.deepStrictEqual(world.keys.map((key) => key.split('/').pop()), ['up', 'up', 'enter']);
+  });
+  await check('auto-approve: no (Recommended) option -> you are told', async () => {
+    const { seen, watcher, set, world } = menu(1, []);
+    await watcher.tick();
+    set('blocked');
+    await watcher.tick();
+    assert.deepStrictEqual(world.keys, []);
+    assert.strictEqual(seen.notes.length, 1);
+  });
+  await check('auto-approve: two (Recommended) options -> you are told', async () => {
+    const { seen, watcher, set, world } = menu(1, [1, 2]);
+    await watcher.tick();
+    set('blocked');
+    await watcher.tick();
+    assert.deepStrictEqual(world.keys, []);
+    assert.strictEqual(seen.notes.length, 1);
+  });
+  await check('auto-approve: several questions (tabs) -> you are told', async () => {
+    const { seen, watcher, set, world } = menu(1, [2]);
+    world.ask = `← ☐ Layout  ☐ Colour  ✔ Submit →\n${pick(1)}`;
+    await watcher.tick();
+    set('blocked');
+    await watcher.tick();
+    assert.deepStrictEqual(world.keys, []);
+    assert.strictEqual(seen.notes.length, 1);
   });
   await check('a second terminal in a room is named in the title', () => {
     assert.strictEqual(alerts.words('done', { room: 'SampleApp', tab: 'tab-2', title: '' }).title, 'SampleApp (terminal 2) is done');

@@ -122,37 +122,6 @@ module.exports = {
       report(back.hidden && back.w > 100 && back.opacity === '0' && !/pair-/.test(back.classes) && await page('window.__t.ai.view.executeJavaScript("1+1")') === 2, `separated and behind the owner's tab again, it is drawn out of sight and still answers: ${JSON.stringify(back)}`);
       await page('houseTest.closeTab(window.__t.ai).then(() => true)');
 
-      // Websites see dark in browser tabs only: off by default, then on for open, new, reloaded and AI pages.
-      const seesDark = (name) => page(`window.__t.${name}.view.executeJavaScript("matchMedia('(prefers-color-scheme: dark)').matches")`);
-      const panelDark = () => page(`matchMedia('(prefers-color-scheme: dark)').matches`);
-      const dark = (on) => page(`window.house.call('obscuraDark', ${on}).then(() => true)`);
-      await openPage('d', '/scheme1');
-      const startDark = await panelDark();
-      report(await seesDark('d') === false && await page('houseTest.state.tabs.filter((x) => x.kind === "obscura").every((x) => (x.dark.dataset.tip || x.dark.title) === "Websites: Light")'), 'off by default: a page sees light, the button says Websites: Light');
-      await dark(true);
-      await sleep(500);
-      await openPage('e', '/scheme2');
-      await page(`houseTest.openObscura(${JSON.stringify(`${base}/ai`)}, true)`).catch(() => {});
-      await page(`(() => { const t = houseTest.state.tabs.filter((x) => x.kind === 'obscura').pop(); t.aiOf = 'Demo'; t.aiSession = ''; t.host.classList.add('ai-live'); window.__t.ai2 = t; return true; })()`);
-      await waitFor(`window.__t.ai2.view.getURL().includes('/ai') && !window.__t.ai2.loading`);
-      page('window.__t.d.view.reload()');
-      await waitFor('!window.__t.d.loading');
-      await sleep(600);
-      const on = [await seesDark('d'), await seesDark('e'), await seesDark('ai2')];
-      report(on.every((x) => x === true) && await panelDark() === startDark, `on: an open page, a new tab, a reloaded page and an AI's tab all see dark, Station's own page is unchanged (${JSON.stringify(on)}, panel ${startDark} to ${await panelDark()})`);
-      report(await page('houseTest.state.tabs.filter((x) => x.kind === "obscura").every((x) => (x.dark.dataset.tip || x.dark.title) === "Websites: Dark" && x.dark.classList.contains("on"))') && (await page(`window.house.call('prefs')`)).darkSites === true, 'every browser tab button says Websites: Dark, and the setting is saved in the prefs');
-      await page(`window.__t.d.view.loadURL(${JSON.stringify(`${base}/scheme3`)})`);
-      await waitFor('window.__t.d.view.getURL().includes("/scheme3") && !window.__t.d.loading');
-      report(await seesDark('d') === true, 'a page loaded after the flip still sees dark');
-      await dark(false);
-      await sleep(500);
-      const off = [await seesDark('d'), await seesDark('e'), await seesDark('ai2')];
-      report(off.every((x) => x === false) && await panelDark() === startDark, `off again: they all see light (${JSON.stringify(off)})`);
-      await page('houseTest.closeTab(window.__t.ai2).then(() => true)');
-      await page('houseTest.closeTab(window.__t.e).then(() => true)');
-      await page('houseTest.closeTab(window.__t.d).then(() => true)');
-      await dark(true);
-
       // The pair survives the page starting again (Ctrl+R, a new version), with its divider place.
       await page('(() => { houseTest.pairTabs(window.__t.term2, window.__t.a, "left", 35); return true; })()');
       await settle();
@@ -161,9 +130,6 @@ module.exports = {
       await sleep(1500);
       const kept = await page('(() => { const l = houseTest.state.tabs.find((x) => x.kind === "term" && x.splitWith); const r = l ? l.splitWith : null; return { term: Boolean(l), mate: r && r.kind, side: l && l.side, mateSide: r && r.side, at: l && l.pairAt, url: r && r.view && r.view.getURL(), shown: [l, r].every((x) => x && !x.host.hidden) }; })()');
       report(again && kept.term && kept.mate === 'obscura' && kept.side === 'left' && kept.mateSide === 'right' && kept.at === 35 && /\/a$/.test(kept.url) && kept.shown, `the pair, its sides and its divider place come back after the page starts again: ${JSON.stringify(kept)}`);
-
-      report(await page('prefs.darkSites') === true && await page(`houseTest.state.tabs.find((x) => x.kind === 'obscura').view.executeJavaScript("matchMedia('(prefers-color-scheme: dark)').matches")`) === true, 'the dark setting is kept through the page starting again, and the page there sees it');
-      await dark(false);
 
       // Two windows: Arrange puts them in the left and right halves.
       await page('(() => { const l = houseTest.state.tabs.find((x) => x.splitWith); if (l) houseTest.separateTabs(l); return true; })()');
@@ -190,6 +156,28 @@ module.exports = {
         await second.webContents.executeJavaScript('document.querySelector(".tabs .tab .bring-back").click(); true').catch(() => {});
         for (let i = 0; i < 20 && extras().length; i += 1) await sleep(300);
       }
+      // The maximize button's flyout: resting the real pointer on it opens it, its layout groups sit in exactly 2 columns, and a tile click snaps.
+      await page('(() => { for (const w of document.querySelectorAll(".snap-bar")) w.remove(); return true; })()');
+      const f = await page('window.house.getZoomFactor()');
+      const mx = await page('(() => { const r = document.getElementById("win-max").getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()');
+      const mouse = (type, p) => win.webContents.sendInputEvent({ type, x: Math.round(p.x * f), y: Math.round(p.y * f), button: 'left', clickCount: 1 });
+      mouse('mouseMove', { x: mx.x - 20, y: mx.y });
+      await sleep(150);
+      mouse('mouseMove', mx);
+      const opened = await waitFor('Boolean(document.querySelector(".snap-bar.flyout"))', 3000);
+      const cols = await page('(() => { const g = [...document.querySelectorAll(".snap-bar.flyout .snap-group")]; return { groups: g.length, lefts: [...new Set(g.map((x) => Math.round(x.getBoundingClientRect().left)))].length }; })()');
+      report(opened && cols.groups >= 2 && cols.lefts === 2, `hovering maximize opens the flyout and its ${cols.groups} layout groups sit in exactly 2 columns (${cols.lefts} found)`);
+      const before = await page('(() => { const r = document.querySelector(".app").getBoundingClientRect(); return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)]; })()');
+      const tile = await page('(() => { const c = [...document.querySelectorAll(".snap-bar.flyout .snap-cell")].reverse().find((x) => x.target && x.target.zone && !x.target.maximize); if (!c) return null; const r = c.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()');
+      if (tile) {
+        mouse('mouseMove', tile);
+        await sleep(200);
+        mouse('mouseDown', tile);
+        mouse('mouseUp', tile);
+        await sleep(900);
+      }
+      const after = await page('(() => { const r = document.querySelector(".app").getBoundingClientRect(); return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)]; })()');
+      report(Boolean(tile) && after.some((v, i) => Math.abs(v - before[i]) > 4), `clicking a tile in the flyout still snaps the window: ${JSON.stringify(before)} to ${JSON.stringify(after)}`);
     } catch (error) {
       report(false, `the scene stopped: ${error.stack}`);
     } finally {

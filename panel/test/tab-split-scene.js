@@ -170,6 +170,38 @@ module.exports = {
         report(await page('!houseTest.state.tabs.some((x) => x === window.__t.mover)'), 'the terminal is gone from the first window');
         for (const w of others()) await w.webContents.executeJavaScript("window.close()").catch(() => {});
       }
+      // (e) Tab onto a neighbour on the strip: held ~450 ms over its middle it pairs; a quick pass over its outer quarter only reorders.
+      await reset('home');
+      await page('houseTest.openTerminal({ cwd: houseTest.state.home }).then((t) => { window.__t.term = t; return true; })');
+      await sleep(800);
+      const tabBox = (name) => page(`(() => { const r = window.__t.${name}.el.getBoundingClientRect(); return { l: r.left, w: r.width, y: r.top + r.height / 2 }; })()`);
+      const dragOnStrip = async (name, mate, frac, holdMs, steps) => {
+        const from = await tabBox(name);
+        const over = await tabBox(mate);
+        const start = { x: from.l + from.w / 2, y: from.y };
+        const end = { x: over.l + over.w * frac, y: over.y };
+        send('mouseMove', start.x, start.y);
+        await sleep(300);
+        send('mouseDown', start.x, start.y);
+        for (let i = 1; i <= steps; i += 1) {
+          send('mouseMove', start.x + (end.x - start.x) * (i / steps), start.y, { modifiers: ['leftButtonDown'] });
+          await sleep(15);
+        }
+        await sleep(holdMs);
+        const lit = await page('Boolean(document.querySelector(".tab-join"))');
+        send('mouseUp', end.x, end.y);
+        await sleep(700);
+        return lit;
+      };
+      let lit = await dragOnStrip('term', 'home', 0.5, 450, 10);
+      report(lit && await pairOf('term', 'home') !== 'no', `a tab held ~450 ms over the middle of its neighbour lights up and pairs on release: lit ${lit}, ${await pairOf('term', 'home')}`);
+      await shot('tabsplit-join-middle');
+      await page('houseTest.separateTabs(window.__t.term); true');
+      await sleep(500);
+      const order = () => page('window.__t.term.el.getBoundingClientRect().left < window.__t.home.el.getBoundingClientRect().left');
+      const before = await order();
+      lit = await dragOnStrip('term', 'home', 0.08, 100, 16);
+      report(!lit && await pairOf('term', 'home') === 'no' && (await order()) !== before, `a quick release over the outer quarter only reorders (no pair): lit ${lit}, order changed ${(await order()) !== before}`);
       // Twenty tabs at 135%: nothing half-clipped, the open tab keeps its icon and X, + stays in view.
       screen.getCursorScreenPoint = realPoint;
       await sleep(800);

@@ -148,7 +148,7 @@ module.exports = {
     });
     await page(`(() => { houseTest.openInObscura('http://127.0.0.1:${site.address().port}/'); return true; })()`);
     await sleep(3000);
-    const onLink = await check('a link in the Web Browser', 'webview', ['Open Link in New Tab', 'Copy Link', 'Back', 'Reload'], { x: 60, y: 60 });
+    const onLink = await check('a link in the Web Browser', 'webview', ['Open Link in New Tab', 'Copy Link Address', 'Back', 'Reload'], { x: 60, y: 60 });
     report(onLink && onLink[3] === 'Select All', 'Select All works in a page');
     const onPage = await check('a page in the Web Browser', 'webview', ['Back', 'Forward', 'Reload'], { x: 60, y: 400 });
     report(onPage && !onPage.includes('Copy Link'), 'plain space has no link items');
@@ -159,8 +159,8 @@ module.exports = {
       win.webContents.setZoomFactor(was0 * stationZoom);
       await sleep(600);
       const shown = await rightClick('webview', { x: 60, y: 60 });
-      const inside = await page(`(() => { const b = document.getElementById('menu').getBoundingClientRect(); return !document.getElementById('menu').hidden && b.left >= 0 && b.top >= 0 && b.right <= window.innerWidth && b.bottom <= window.innerHeight; })()`);
-      report(shown && inside, `the page's menu opens inside the window (Station ${stationZoom * 100}%)`);
+      const inside = await page(`(() => { const b = document.getElementById('menu').getBoundingClientRect(); const a = document.querySelector('.app').getBoundingClientRect(); return !document.getElementById('menu').hidden && b.left >= a.left && b.top >= a.top && b.right <= a.right && b.bottom <= a.bottom; })()`);
+      report(shown && inside, `the page's menu opens inside the drawn window (Station ${stationZoom * 100}%)`);
     }
     win.webContents.setZoomFactor(was0);
     await page(`closeMenu(); true`);
@@ -233,6 +233,132 @@ module.exports = {
       return [make(false), make(true)];
     })()`);
     report(looks[0] !== looks[1], `a disabled primary button has its own background: ${JSON.stringify(looks)}`);
+
+    // Where a menu opens and how it closes: a real right-click on a Files row, the tab strip, a terminal
+    // and a Web Browser page. The menu's top left must land on the click (12 px slack), and Esc and a
+    // real left click in the page under it must each close it. Run with the window as it is, and again
+    // with the drawn window moved away from the corner (offset bugs only show then).
+    {
+      const { webContents: contents } = require('electron');
+      const site = await new Promise((resolve) => {
+        const made = http.createServer((_request, response) => {
+          response.writeHead(200, { 'content-type': 'text/html' });
+          response.end('<body style="margin:0"><p style="height:600px">plain words</p></body>');
+        });
+        made.listen(0, '127.0.0.1', () => resolve(made));
+      });
+      const where = (selector, spot) => page(`(() => {
+        const node = document.querySelector(${JSON.stringify(selector)});
+        if (!node) return null;
+        const box = node.getBoundingClientRect();
+        const spot = ${JSON.stringify(spot)};
+        return { x: box.left + (spot.x < 0 ? box.width + spot.x : spot.x), y: box.top + (spot.y < 0 ? box.height + spot.y : spot.y), f: window.outerWidth / window.innerWidth };
+      })()`);
+      const menuAt = () => page(`(() => {
+        const m = document.getElementById('menu');
+        if (m.hidden) return null;
+        const b = m.getBoundingClientRect();
+        const a = document.querySelector('.app').getBoundingClientRect();
+        return { x: b.left, y: b.top, w: b.width, h: b.height, app: { l: a.left, t: a.top, r: a.right, b: a.bottom } };
+      })()`);
+      // A menu that doesn't fit is pushed back inside the window (4 px from its edge), so that's where it should be.
+      const clamp = (want, got) => ({
+        x: Math.max(got.app.l + 4, Math.min(want.x, got.app.r - got.w - 4)),
+        y: Math.max(got.app.t + 4, Math.min(want.y, got.app.b - got.h - 4)),
+      });
+      // The Web Browser's mouse spot is read from the screen by main (lib/obscura.js), which a test
+      // can't move, so the cursor is faked: on the click ('cursor'), or far away so the page's own spot is used ('away').
+      const screen = require('electron').screen;
+      const realCursor = screen.getCursorScreenPoint;
+      const cursorAt = (css) => {
+        const bounds = win.getContentBounds();
+        const zoom = win.webContents.getZoomFactor();
+        screen.getCursorScreenPoint = () => (css ? { x: Math.round(bounds.x + css.x * zoom), y: Math.round(bounds.y + css.y * zoom) } : { x: -9000, y: -9000 });
+      };
+      // The click goes to Station's window, as the mouse does: it lands on the page under it.
+      const realRight = async (p) => {
+        const send = (event) => win.webContents.sendInputEvent({ ...event, x: Math.round(p.x * p.f) + (event.dx || 0), y: Math.round(p.y * p.f) });
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+          await page(`closeMenu(); true`);
+          // A real mouse moves over the page first, so a page that has been clicked sees it arrive.
+          send({ type: 'mouseMove', dx: 6 });
+          await sleep(100);
+          send({ type: 'mouseMove' });
+          await sleep(150);
+          for (const type of ['mouseDown', 'mouseUp']) send({ type, button: 'right', clickCount: 1 });
+          for (let wait = 0; wait < 15 && !(await menuAt()); wait += 1) await sleep(100); // the page answers over IPC
+          if (await menuAt()) {
+            if (attempt > 1) console.log(`INFO right-click needed ${attempt} tries`);
+            return;
+          }
+        }
+      };
+      const click = async (p) => {
+        for (const type of ['mouseDown', 'mouseUp']) win.webContents.sendInputEvent({ type, x: Math.round(p.x * p.f), y: Math.round(p.y * p.f), button: 'left', clickCount: 1 });
+        await sleep(300);
+      };
+      const esc = async () => {
+        for (const type of ['keyDown', 'keyUp']) win.webContents.sendInputEvent({ type, keyCode: 'Escape' });
+        await sleep(300);
+      };
+      const runCases = async (layout) => {
+        const cases = [];
+        const tryCase = async (name, selector, spot, closeSelector, closeSpot, cursor = undefined) => {
+          const label = cursor === undefined ? name : `${name} (mouse ${cursor ? 'read' : 'unreadable'})`;
+          const open = async () => {
+            if (cursor === undefined) return rightClick(selector, spot);
+            const at = await where(selector, spot);
+            cursorAt(cursor ? at : null);
+            await realRight(at);
+            return true;
+          };
+          const want = await where(selector, spot);
+          const shown = await open();
+          const got = await menuAt();
+          if (!want || !shown || !got) return report(false, `${layout}: ${label}: no menu opened`);
+          const goal = clamp(want, got);
+          const dx = Math.round(got.x - goal.x);
+          const dy = Math.round(got.y - goal.y);
+          cases.push(`${label} ${dx},${dy}`);
+          report(Math.abs(dx) <= 12 && Math.abs(dy) <= 12, `${layout}: menu on ${label} opens at the click (off by ${dx}, ${dy} px; click at ${Math.round(want.x)}, ${Math.round(want.y)}; menu ${Math.round(got.x)}, ${Math.round(got.y)})`);
+          await shot(`menu-${name.replace(/ /g, '-')}${cursor === undefined ? '' : cursor ? '-cursor' : '-away'}-${layout}`);
+          await esc();
+          report((await menuAt()) === null, `${layout}: Esc closes the menu on ${label}`);
+          await open();
+          await click(await where(closeSelector, closeSpot));
+          report((await menuAt()) === null, `${layout}: a left click in the page (${closeSelector}) closes the menu on ${label}`);
+        };
+        await page(ONE_TAB_LEFT_CODE);
+        await page(`houseTest.navigate(houseTest.state.projects); true`);
+        await sleep(1200);
+        await tryCase('a Files row', '#rows [data-path$="/readme.md"]', { x: 40, y: 8 }, '#rows', { x: -40, y: -20 });
+        const strip = await page(`(() => { const b = document.querySelector('.tabs').getBoundingClientRect(); return b.width; })()`);
+        await tryCase('the tab strip', '.tabs', { x: strip - 30, y: 12 }, '#rows', { x: 300, y: -20 });
+        await page(`houseTest.openTerminal({ cwd: houseTest.state.home }).then(() => true)`);
+        await sleep(2500);
+        await tryCase('a terminal tab', '.term-host:not([hidden]) .xterm-screen', { x: 120, y: 90 }, '.term-host:not([hidden]) .xterm-screen', { x: -40, y: 40 });
+        await page(`houseTest.closeTab(houseTest.state.active); true`);
+        await sleep(600);
+        await page(`houseTest.openInObscura('http://127.0.0.1:${site.address().port}/'); true`);
+        await sleep(3000);
+        await tryCase('a browser tab', 'webview', { x: 120, y: 90 }, 'webview', { x: -40, y: 40 }, true);
+        await tryCase('a browser tab', 'webview', { x: 120, y: 90 }, 'webview', { x: -40, y: 40 }, false);
+        await page(ONE_TAB_LEFT_CODE);
+        await sleep(500);
+        console.log(`INFO ${layout} menu offsets: ${cases.join('; ')}`);
+      };
+      await runCases('default');
+      // Move the drawn window: not maximized, away from the top left corner.
+      const kept = await page(`(() => { const a = document.querySelector('.app'); const s = a.style; const old = [s.left, s.top, s.width, s.height]; s.left = '14%'; s.top = '17%'; s.width = '66%'; s.height = '70%'; return old; })()`);
+      await sleep(800);
+      const moved = await page(`(() => { const b = document.querySelector('.app').getBoundingClientRect(); return [Math.round(b.left), Math.round(b.top), Math.round(b.width), Math.round(b.height), window.innerWidth, window.innerHeight, window.outerWidth / window.innerWidth]; })()`);
+      console.log(`INFO moved window box: ${JSON.stringify(moved)}`);
+      report(moved[0] > 50 && moved[1] > 50, 'the drawn window is away from the corner');
+      await runCases('moved');
+      await page(`(() => { const s = document.querySelector('.app').style; [s.left, s.top, s.width, s.height] = ${JSON.stringify(kept)}; return true; })()`);
+      screen.getCursorScreenPoint = realCursor;
+      site.close();
+    }
 
     // Every width, with a project picked: the top bar's buttons never spill over its edge.
     await page(`houseTest.navigate(houseTest.state.projects); true`);

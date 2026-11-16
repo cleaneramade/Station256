@@ -1,5 +1,37 @@
 # Changelog
 
+## 1.5.0
+
+### Added
+
+- **Auto-approve, per room.** A new Auto-approve button sits in the room's header, next to New Room. With it on, Station answers the room AI's permission questions with Yes. On a numbered question where exactly one option is marked "(Recommended)", it picks that option. Anything less clear (no Recommended option, several of them, several questions at once) still sends you a notification, as does the AI finishing. If the same question keeps coming back, Station stops answering it and tells you. It is off by default and remembered per room.
+- **A smarter Preview.** Preview now finds every site in a project: at the top and in each folder one level down. If there is more than one, it asks which to run and remembers your pick (right-click Preview to choose again). The site runs in the room's background instead of a terminal tab, and the Agents page lists it with a Stop button. Closing the site's browser tab (or its window) stops it. Moving, splitting or reloading the tab, or restarting Station, does not. After a Station restart, a site that is still running is found again instead of started twice.
+- **Clickable paths in terminals.** A folder or file path an AI prints (`/workspace/...`, `~/...`, `L:\...`, `\\wsl.localhost\...`, and `C:\...` while Windows files are unlocked) is underlined when it exists. Clicking it opens that place in Files, the same way View Files does. A file opens its folder with the file selected.
+- **Open sites in the browser.** A new toolbar button lists the sites running on localhost (room sites and house ones). Click one to open it.
+- **A full right-click menu on web pages:** Open Link in New Tab, Copy Link Address, Open Image in New Tab, Save Image, Copy Image, Copy Image Address, Search Google for the selected words, Back, Forward, Reload, Print and Inspect.
+- **Websites ask before using your microphone or camera.** A site that wants them asks with Block and Allow, and your answer is remembered. Click the lock icon in the address bar to change it.
+- **Drag a tab onto a tab to split.** Hold a dragged tab over the middle of another tab for a moment: it lights up, and letting go puts the two side by side. The outer parts of a tab still just reorder.
+
+### Changed
+
+- **Downloads are sorted by type.** Music goes to Music, videos to Videos, pictures to Pictures, documents (PDF, Word, Excel, PowerPoint, text, Markdown, CSV and more) to Documents, and everything else to Downloads.
+- **"Your folders" is on by default.** On a new install, rooms can save into Documents, Pictures, Music, Videos and Downloads. The room AI is told which folder each kind of file goes in. Turn it off in House Rules to keep every room out. An existing setting is kept.
+- **The snap-layout menu wraps into two columns,** like the one in Windows 11.
+- **Room AIs are told not to open extra Herdr tabs** in their terminal, and to run sites in the background or use Preview. This keeps Herdr's tab row out of the terminal.
+- **The Files address bar takes pasted paths:** quoted paths, `\\wsl.localhost\...`, `/workspace/...` and file paths. A place that doesn't exist now says so instead of doing nothing.
+- **The System list counts memory honestly.** Memory that is shared is counted once, so Station's own parts read about half what they did. Station 256's own parts (Electron, Herdr, shells, ssh) can't be ended from the list, and the programs you can end come first.
+- **Rooms get Station 256's own Jev key** each time they start.
+
+### Removed
+
+- **The Websites: Light / Dark button** in browser tabs. It didn't work reliably. Themes will come back with Station 256 themes.
+
+### Fixed
+
+- **Back-to-back AI questions are no longer missed.** When an AI asked a second question right after the first, its tab could stay green and no notification came. Station now reads the screen: a question showing means the tab is yellow and you are told, every time, even if the same question comes again. Old questions left higher up on the screen don't count.
+- **Right-click menus open where you click** and close on any click (also inside a web page or a terminal), Esc, scrolling or switching tabs.
+- **Notifications show the real command,** not Claude's "Tip" line.
+
 ## 1.4.1
 
 ### Changed

@@ -11,6 +11,7 @@ const crypto = require('crypto');
 const herdr = require('./herdr');
 
 const EVERY = 3000;
+const REPEAT = 8000; // the same question still up this long after it was answered counts as a new one
 const NAME = /^[A-Za-z0-9]([A-Za-z0-9 _-]*[A-Za-z0-9_-])?$/;
 const RANK = { blocked: 4, working: 3, done: 2, idle: 1, unknown: 0 };
 
@@ -26,6 +27,40 @@ const cut = (text, max) => (text.length > max ? `${text.slice(0, max - 1).trimEn
 const flat = (text) => herdr.plain(String(text || ''), 400);
 const RULE = /^\s*[╭╰├]?[─━]{8,}/;
 const OPTION = /^\s*([❯›>])?\s*(\d)[.)]\s+(.*)$/;
+
+// A multiple-choice menu at the bottom of the screen (Claude's question with numbered options and a
+// ❯ on the one picked). Gives { choices, picked, recommended, multi, fingerprint }, or {} when there
+// isn't one. recommended = the numbers of the options marked "(Recommended)". multi = several
+// questions (tabs) or tick boxes, which are never answered for you.
+function readChoices(lines) {
+  const tail = lines.slice(-40);
+  let first = -1;
+  tail.forEach((line, i) => { if (/^\s*[❯›>]?\s*1[.)]\s/.test(line)) first = i; });
+  if (first < 0) return {};
+  const choices = [];
+  for (let i = first; i < tail.length; i += 1) {
+    const match = tail[i].match(OPTION);
+    if (match && Number(match[2]) === choices.length + 1) choices.push({ picked: match[1] === '❯', number: Number(match[2]), text: cut(flat(match[3]), 160) });
+  }
+  // Only the live menu counts: Claude's footer comes right after the options (past messages you
+  // typed, shown with "> ", have none).
+  const last = tail.findIndex((line, i) => i > first && /Enter to select|Esc to cancel|to navigate/.test(line));
+  if (last < 0) return {};
+  const lastOption = Math.max(...choices.map((choice) => tail.findIndex((line, i) => i >= first && OPTION.test(line) && Number(line.match(OPTION)[2]) === choice.number)));
+  if (tail.slice(lastOption + 1, last).some((line) => /\S/.test(line) && !/^\s{3,}\S/.test(line) && !RULE.test(line))) return {};
+  const picked = choices.find((choice) => choice.picked);
+  if (choices.length < 2 || !picked) return {};
+  const above = tail.slice(0, first);
+  const question = [...above].reverse().find((line) => /\S.{2,}\?$/.test(line.trim())) || '';
+  const multi = above.some((line) => /[☐☒✔☑].*[☐☒✔☑]|Submit/.test(line)) || choices.some((choice) => /^(\[[ xX✔]\]|[☐☒☑])/.test(choice.text));
+  return {
+    choices,
+    picked: picked.number,
+    recommended: choices.filter((choice) => choice.text.includes('(Recommended)')).map((choice) => choice.number),
+    multi,
+    fingerprint: crypto.createHash('sha256').update([question.trim(), ...choices.map((choice) => `${choice.number}. ${choice.text}`)].join('\n')).digest('hex'),
+  };
+}
 
 // Claude's permission question on a pane's screen, if it's showing one:
 //   Bash command
@@ -46,22 +81,30 @@ function readPrompt(screen) {
   if (at < 0) {
     // Some other question, such as one with choices to pick from: its last line asking something.
     const asked = lines.slice(-30).reverse().find((line) => /\S.{2,}\?$/.test(line.trim()) && !OPTION.test(line));
-    return { question: asked ? cut(flat(asked), 160) : '', canAnswer: false };
+    return { question: asked ? cut(flat(asked), 160) : '', canAnswer: false, ...readChoices(lines) };
   }
   const options = [];
   for (let i = at + 1; i < lines.length && i <= at + 12; i += 1) {
     const match = lines[i].match(OPTION);
-    if (match) options.push({ picked: Boolean(match[1]), number: Number(match[2]), text: match[3].trim(), line: i });
+    if (match) options.push({ picked: match[1] === '❯', number: Number(match[2]), text: match[3].trim(), line: i });
     else if (options.length && /^\s*\S/.test(lines[i]) && !/^\s{3,}\S/.test(lines[i])) break; // past the list
   }
   const question = cut(flat(lines[at]), 160);
   const yes = options.find((option) => option.number === 1 && /^Yes\b/.test(option.text));
   const no = options.find((option) => /^No\b/.test(option.text));
   if (!yes || !no) return { question, canAnswer: false };
+  // Only the live question counts: below it, nothing but its own lines, a rule or Claude's footer.
+  // Text left in the scrollback above the input box has more under it.
+  const below = lines.slice(Math.max(...options.map((option) => option.line)) + 1);
+  if (below.some((line) => /\S/.test(line) && !/^\s{3,}\S/.test(line) && !RULE.test(line) && !/Esc to cancel/.test(line))) return { question, canAnswer: false };
   // What it's asking about: everything from the rule line above the question.
   let start = at;
   while (start > 0 && at - start < 40 && !RULE.test(lines[start - 1])) start -= 1;
-  const about = lines.slice(start, at).map((line) => flat(line)).filter(Boolean);
+  const raw = lines.slice(start, at);
+  const about = raw.map((line) => flat(line)).filter((line) => line && !/^Tip:/.test(line));
+  // Newer Claude draws the command between two dashed rules: that is the detail.
+  const dashed = raw.map((line, i) => (/^\s*╌{4,}/.test(line) ? i : -1)).filter((i) => i >= 0);
+  const command = dashed.length >= 2 ? flat(raw.slice(dashed[0] + 1, dashed[1]).join(' ')) : '';
   const end = Math.max(...options.map((option) => option.line));
   const block = lines.slice(start, end + 1).map((line) => {
     const match = line.match(OPTION);
@@ -70,7 +113,7 @@ function readPrompt(screen) {
   return {
     question,
     heading: cut(about[0] || '', 80),
-    detail: cut(about[1] || '', 160),
+    detail: cut(command || about[1] || '', 160),
     canAnswer: true,
     yesPicked: yes.picked,
     fingerprint: crypto.createHash('sha256').update(block).digest('hex'),
@@ -98,7 +141,8 @@ function words(kind, item, prompt) {
 // Gives { start, stop, answer(id, action), seen(room, tab) }. answer returns what happened:
 // 'opened', 'approved', 'denied', 'changed' (the question was gone, so the tab was opened instead)
 // or 'unknown'.
-function create({ listRooms, statuses, notify, unnotify, looking = () => false, openTab, every = EVERY, read = herdr }) {
+// autoApprove(room) says whether that room answers by itself, and log(line) hears each time it does.
+function create({ listRooms, statuses, notify, unnotify, looking = () => false, openTab, every = EVERY, read = herdr, autoApprove = () => false, log = () => {}, pause = 150 }) {
   const known = new Map(); // "room<TAB>tab-N" -> what that tab is doing
   const notes = new Map(); // notification id -> what it was about
   let timer = null;
@@ -111,13 +155,57 @@ function create({ listRooms, statuses, notify, unnotify, looking = () => false, 
     unnotify(tagOf(key));
   };
 
+  // With Auto-approve on for the room: Yes for a permission question, or the one option marked
+  // "(Recommended)" for a multiple-choice one. Anything less clear is left to you. True when answered.
+  async function autoAnswer(item, prompt) {
+    if (!prompt?.fingerprint || !autoApprove(item.room)) return false;
+    const look = async () => readPrompt(await read.screenOf(item.room, item.tab, item.pane).catch(() => ''));
+    const press = (key) => read.pressKey(item.room, item.tab, item.pane, key).catch(() => false);
+    const where = `${item.room}/${item.tab}`;
+    // The same question answered twice already and back again: something's wrong, so you decide.
+    const own = known.get(`${item.room}	${item.tab}`);
+    if (own?.auto?.fp === prompt.fingerprint && own.auto.n >= 2 && Date.now() - own.auto.at < REPEAT * 3) return false;
+    const done = () => {
+      const again = own?.auto?.fp === prompt.fingerprint && Date.now() - own.auto.at < REPEAT * 3;
+      if (own) own.auto = { fp: prompt.fingerprint, n: again ? own.auto.n + 1 : 1, at: Date.now() };
+      return true;
+    };
+    if (prompt.canAnswer) {
+      const now = await look(); // still the same question, with Yes picked?
+      if (!now.canAnswer || now.fingerprint !== prompt.fingerprint || !now.yesPicked || !await press('enter')) return false;
+      log(`Auto-approved ${where}: ${prompt.question}`);
+      return done();
+    }
+    if (prompt.multi || prompt.recommended?.length !== 1) return false;
+    const target = prompt.recommended[0];
+    for (let step = 0; step < 12; step += 1) { // move the arrow there, checking the screen each time
+      const now = await look();
+      if (now.fingerprint !== prompt.fingerprint || now.multi) return false;
+      if (now.picked === target) {
+        if (!await press('enter')) return false;
+        log(`Auto-picked option ${target} in ${where}: ${prompt.question}`);
+        return done();
+      }
+      if (!await press(now.picked < target ? 'down' : 'up')) return false;
+      await new Promise((resolve) => setTimeout(resolve, pause));
+    }
+    return false;
+  }
+
   async function alert(kind, key, item) {
+    let prompt = item.prompt || null;
+    if (kind === 'needs' && !prompt) prompt = readPrompt(await read.screenOf(item.room, item.tab, item.pane).catch(() => ''));
+    // Answered for you, even while you're looking at that terminal.
+    if (kind === 'needs' && await autoAnswer(item, prompt)) {
+      const own = known.get(key);
+      if (own) own.answeredAt = Date.now();
+      forget(key);
+      return;
+    }
     if (await looking(item.room, item.tab)) {
       forget(key);
       return;
     }
-    let prompt = null;
-    if (kind === 'needs') prompt = readPrompt(await read.screenOf(item.room, item.tab, item.pane).catch(() => ''));
     // It may have moved on while the screen was read.
     const current = known.get(key);
     if (!current || (kind === 'needs' && current.settled !== 'blocked')) return;
@@ -150,7 +238,18 @@ function create({ listRooms, statuses, notify, unnotify, looking = () => false, 
         }
         for (const { tab, panes } of tabs) {
           const state = tabState(panes);
-          if (state) seen.set(`${name}\t${tab}`, { room: name, tab, ...state });
+          if (!state) continue;
+          // Herdr can lag behind the screen, so a tab it calls working or blocked is checked: a
+          // question on the screen means it needs you.
+          if ((state.status === 'working' || state.status === 'blocked') && state.pane) {
+            const screen = await read.screenOf(name, tab, state.pane).catch(() => null);
+            if (screen !== null) {
+              state.read = true;
+              state.prompt = readPrompt(screen);
+              if (state.prompt.fingerprint) state.status = 'blocked';
+            }
+          }
+          seen.set(`${name}\t${tab}`, { room: name, tab, ...state });
         }
       }));
       const settling = [];
@@ -158,10 +257,23 @@ function create({ listRooms, statuses, notify, unnotify, looking = () => false, 
         const item = known.get(key);
         if (!item) {
           // First sight, as when Station 256 opens: what it's doing already isn't news.
-          known.set(key, { ...now, settled: now.status, pending: null, count: 0 });
+          known.set(key, { ...now, prompt: null, settled: now.status, pending: null, count: 0, alerted: now.prompt?.fingerprint || null, answeredAt: 0 });
           continue;
         }
         Object.assign(item, { status: now.status, agent: now.agent, title: now.title, pane: now.pane || item.pane });
+        // A question on the screen is believed straight away. Each new one alerts: a different one,
+        // or the same one again once the last was answered.
+        const fp = now.prompt?.fingerprint || null;
+        if (now.read && !fp) Object.assign(item, { alerted: null, answeredAt: 0 });
+        if (fp) {
+          const fresh = item.alerted !== fp || (item.answeredAt && Date.now() - item.answeredAt > REPEAT);
+          Object.assign(item, { settled: 'blocked', pending: null, count: 0 });
+          if (fresh) {
+            Object.assign(item, { alerted: fp, answeredAt: 0 });
+            settling.push(alert('needs', key, { ...item, prompt: now.prompt }).catch(() => {}));
+          }
+          continue;
+        }
         if (now.status === item.settled) {
           item.pending = null;
           continue;
@@ -202,6 +314,8 @@ function create({ listRooms, statuses, notify, unnotify, looking = () => false, 
       const prompt = note.fingerprint ? readPrompt(await read.screenOf(note.room, note.tab, note.pane).catch(() => '')) : null;
       const same = prompt?.canAnswer && prompt.fingerprint === note.fingerprint && (action === 'deny' || prompt.yesPicked);
       if (same && await read.pressKey(note.room, note.tab, note.pane, action === 'approve' ? 'enter' : 'esc').catch(() => false)) {
+        const item = known.get(note.key);
+        if (item) item.answeredAt = Date.now(); // the next question counts as new
         return action === 'approve' ? 'approved' : 'denied';
       }
       await openTab(note.room, note.tab);

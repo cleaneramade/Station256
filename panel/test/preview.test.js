@@ -91,55 +91,95 @@ const need = (bin, label) => `{ command -v ${bin} >/dev/null || { echo "${label}
     // Only at the top: one in a subfolder doesn't count.
     assert.strictEqual((await preview.plan(project('own-sub', { 'web/.station-preview': 'x' }))).command, null);
   });
-  await check('subfolders only when the top has nothing', async () => {
-    const found = await preview.plan(project('k', { 'frontend/package.json': pkg({ dev: 'x' }), 'frontend/node_modules/': '' }));
-    assert.deepStrictEqual(found, { command: 'npm run dev', folder: 'frontend' });
-    const top = await preview.plan(project('l', { 'index.html': '', 'web/package.json': pkg({ dev: 'x' }) }));
-    assert.deepStrictEqual(top, { command: 'python3 -m http.server 8000', folder: '' });
-    assert.strictEqual((await preview.plan(project('m', { 'other/package.json': pkg({ dev: 'x' }) }))).command, null);
+  await check('detection: none, one at the top, one in a folder', async () => {
+    assert.strictEqual((await preview.plan(project('d-none', { 'notes.txt': 'x' }))).command, null);
+    assert.strictEqual((await preview.plan(project('d-none2', { 'other/readme.md': 'x' }))).command, null);
+    assert.deepStrictEqual(await preview.plan(project('d-top', { 'package.json': pkg({ dev: 'x' }), 'node_modules/': '' })), { command: 'npm run dev', folder: '' });
+    assert.deepStrictEqual(await preview.plan(project('k', { 'frontend/package.json': pkg({ dev: 'x' }), 'frontend/node_modules/': '' })), { command: 'npm run dev', folder: 'frontend' });
+  });
+  await check('detection: three sites in subfolders gives a list, in order', async () => {
+    const dir = project('d-three', { 'web/package.json': pkg({ dev: 'x' }), 'web/node_modules/': '', 'api/main.py': 'FastAPI(', 'docs-site/index.html': '' });
+    const found = await preview.plan(dir);
+    assert.strictEqual(found.command, null);
+    assert.deepStrictEqual(found.choose.map((site) => site.folder), ['api', 'docs-site', 'web']);
+    assert.strictEqual(found.choose[2].command, 'npm run dev');
+  });
+  await check('detection: node_modules, dist, hidden folders and a top-level static folder are not sites', async () => {
+    const found = await preview.plan(project('d-skip', { 'index.html': '', 'node_modules/x/package.json': pkg({ dev: 'x' }), 'dist/package.json': pkg({ dev: 'x' }), '.cache/package.json': pkg({ dev: 'x' }), 'public/index.html': '' }));
+    assert.deepStrictEqual(found, { command: 'python3 -m http.server 8000', folder: '' });
+    // A top that serves public/ itself doesn't list public/ as another site, but a docs/ app of its own counts.
+    const two = await preview.plan(project('d-static', { 'public/index.html': '', 'docs/package.json': pkg({ dev: 'x' }), 'docs/node_modules/': '' }));
+    assert.deepStrictEqual(two.choose.map((site) => site.folder), ['', 'docs']);
+  });
+  await check('detection: a picked folder is used, a vanished one asks again', async () => {
+    const dir = project('d-pick', { 'package.json': pkg({ dev: 'x' }), 'node_modules/': '', 'web/index.html': '' });
+    assert.strictEqual((await preview.plan(dir, 'web')).folder, 'web');
+    assert.strictEqual((await preview.plan(dir, '')).folder, '');
+    assert.strictEqual((await preview.plan(dir, 'gone')).choose.length, 2);
+    assert.strictEqual((await preview.plan(dir)).choose.length, 2);
   });
 
-  // run(): the typed command and the wait for a new port, with fake terminals and ports.
+  // run(): starts in the room's background and waits for a new port, with a fake docker and ports.
+  // log is what the room's log file holds (docker tail gives it back).
   const fakes = (portSteps, opts = {}) => {
-    const typed = [];
+    const calls = [];
     const opened = [];
     let step = 0;
     return {
-      typed,
+      calls,
       opened,
       deps: {
-        terminals: { has: () => opts.gone !== true, buffer: () => (opts.screen ? opts.screen() : 'prompt$ '), write: (id, text) => typed.push(text) },
-        ports: { portsOf: async () => (opts.noLook ? null : new Set(portSteps[Math.min(step++, portSteps.length - 1)])) },
+        docker: async (args) => { calls.push(args); return args[2] === 'tail' ? (opts.log || '') : ''; },
+        openRoom: async () => { calls.push(['openRoom']); },
+        ports: { portsOf: async () => (opts.noLook ? null : (portSteps[Math.min(step++, portSteps.length - 1)] ? new Set(portSteps[Math.min(step - 1, portSteps.length - 1)]) : null)) },
         openUrl: async (url) => opened.push(url),
       },
     };
   };
-  const quick = { settleMs: 5, pollMs: 5, readyMs: 500, waitMs: 200 };
-  await check('run types the command, then opens the first new port', async () => {
+  const quick = { pollMs: 5, waitMs: 200 };
+  const started = (f) => f.calls.find((args) => args[0] === 'exec' && args[1] === '-d');
+  await check('run starts it in the background (no terminal), then opens the first new port', async () => {
     const f = fakes([[22, 3000], [22, 3000], [22, 3000, 5173]]);
-    const result = await preview.run({ room: 'Run One', termId: 1, command: 'npm run dev' }, f.deps, quick);
-    assert.deepStrictEqual(f.typed, ["npm run dev; printf 'STATION-DONE-%s\\n' \"$?\"\r"]);
+    const result = await preview.run({ room: 'Run One', folder: 'web', command: 'npm run dev' }, f.deps, quick);
+    const args = started(f);
+    assert.deepStrictEqual(args.slice(0, 5), ['exec', '-d', '-w', '/workspace/web', 'room-Run.One']);
+    assert.deepStrictEqual(args.slice(5, 8), ['setsid', '-f', 'bash']);
+    assert.ok(args.includes('npm run dev'));
     assert.deepStrictEqual(f.opened, ['http://localhost:5173']);
     assert.strictEqual(result.ok, true);
-    // Asked again while its port still answers: begin() says it's running, nothing is typed.
-    const again = await preview.begin('Run One', async () => new Set([5173]));
-    assert.deepStrictEqual(again, { running: true, port: 5173 });
-    const stopped = await preview.begin('Run One', async () => new Set([]));
+    assert.deepStrictEqual(preview.list(), [{ room: 'Run One', folder: 'web', port: 5173 }]);
+    // Asked again while its port still answers: begin() says it's running, nothing is started.
+    assert.deepStrictEqual(await preview.begin('Run One', async () => new Set([5173])), { running: true, port: 5173 });
+    // Closing the tab: stop() kills the process group in the room and forgets it.
+    assert.strictEqual(await preview.stop('Run One', f.deps.docker), true);
+    const kill = f.calls[f.calls.length - 1];
+    assert.ok(kill[4].includes('kill -TERM -- -"$p"'), kill[4]);
+    assert.deepStrictEqual(preview.list(), []);
+    assert.strictEqual(await preview.stop('Run One', f.deps.docker), false);
+    const stopped = await preview.begin('Run One', async () => new Set([]), undefined, async () => '');
     assert.notStrictEqual(stopped.running, true);
   });
-  await check('run gives up with the plain message when no site appears', async () => {
-    const f = fakes([[3000]]);
-    const result = await preview.run({ room: 'Run Two', termId: 1, command: 'x' }, f.deps, quick);
-    assert.deepStrictEqual(result, { ok: false, message: 'The project started but no site appeared. Check its terminal.' });
-    assert.deepStrictEqual(f.opened, []);
+  await check('run starts a closed room first, with no terminal', async () => {
+    const f = fakes([null, [22], [22, 4000]]);
+    const result = await preview.run({ room: 'Run Six', command: 'x' }, f.deps, quick);
+    assert.strictEqual(result.ok, true);
+    assert.strictEqual(f.calls[0][0], 'openRoom');
+    assert.strictEqual(started(f)[3], '/workspace');
+    await preview.stop('Run Six', f.deps.docker);
   });
-  await check('run does not hang when the terminal is gone or the room can\'t be looked at', async () => {
-    const gone = await preview.run({ room: 'Run Three', termId: 1, command: 'x' }, fakes([[]], { gone: true }).deps, quick);
-    assert.strictEqual(gone.ok, false);
+  await check('run gives up with the plain message when no site appears, and stops what it started', async () => {
+    const f = fakes([[3000]]);
+    const result = await preview.run({ room: 'Run Two', command: 'x' }, f.deps, quick);
+    assert.deepStrictEqual(result, { ok: false, message: 'The project started but no site appeared.' });
+    assert.deepStrictEqual(f.opened, []);
+    assert.ok(f.calls[f.calls.length - 1][4].includes('kill -TERM'));
+    assert.deepStrictEqual(preview.list(), []);
+  });
+  await check('run does not hang when the room can\'t be looked at', async () => {
     const blind = fakes([[]], { noLook: true });
-    const result = await preview.run({ room: 'Run Four', termId: 1, command: 'x' }, blind.deps, quick);
+    const result = await preview.run({ room: 'Run Four', command: 'x' }, blind.deps, quick);
     assert.strictEqual(result.ok, false);
-    assert.deepStrictEqual(blind.typed, []);
+    assert.strictEqual(started(blind), undefined);
   });
 
   // Every kind of project: [label, files, expected command (a string, or a check of it)].
@@ -199,26 +239,47 @@ const need = (bin, label) => `{ command -v ${bin} >/dev/null || { echo "${label}
     assert.strictEqual((await preview.plan(project('order-node-first', { 'package.json': pkg({ dev: 'x' }), 'node_modules/': '', 'index.php': '' }))).command, 'npm run dev');
   });
 
-  // Fast failure: the end marker shows in the terminal before any port does.
+  // Fast failure: the end marker shows in the log before any port does.
   await check('run says a missing tool at once', async () => {
-    const f = fakes([[]], { screen: () => 'prompt$ Flutter isn\'t installed in this room.\nSTATION-DONE-127\n' });
+    const f = fakes([[]], { log: 'Flutter isn\'t installed in this room.\nSTATION-DONE-127\n' });
     const began = Date.now();
-    const result = await preview.run({ room: 'Fast One', termId: 1, command: 'x', missing: 'Flutter isn\'t installed in this room.' }, f.deps, { ...quick, waitMs: 5000 });
+    const result = await preview.run({ room: 'Fast One', command: 'x', missing: 'Flutter isn\'t installed in this room.' }, f.deps, { ...quick, waitMs: 5000 });
     assert.deepStrictEqual(result, { ok: false, message: 'Flutter isn\'t installed in this room.' });
     assert.ok(Date.now() - began < 1500);
   });
-  await check('run says a crash at once, and the typed line alone is not an ending', async () => {
-    const crashed = fakes([[]], { screen: () => 'prompt$ x\nboom\nSTATION-DONE-1\n' });
-    assert.deepStrictEqual(await preview.run({ room: 'Fast Two', termId: 1, command: 'x' }, crashed.deps, quick), { ok: false, message: 'The project stopped before a site appeared. Check its terminal.' });
-    const typedOnly = fakes([[]], { screen: () => 'prompt$ x; printf \'STATION-DONE-%s\\n\' "$?"' });
-    assert.strictEqual((await preview.run({ room: 'Fast Three', termId: 1, command: 'x' }, typedOnly.deps, quick)).message, 'The project started but no site appeared. Check its terminal.');
+  await check('run says a crash at once', async () => {
+    const crashed = fakes([[]], { log: 'boom\nSTATION-DONE-1\n' });
+    assert.deepStrictEqual(await preview.run({ room: 'Fast Two', command: 'x' }, crashed.deps, quick), { ok: false, message: 'The project stopped before a site appeared.' });
   });
+  await check('show log types a tail of the log into the terminal', async () => {
+    const typed = [];
+    const deps = { terminals: { has: () => true, buffer: () => 'prompt$ ', write: (id, text) => typed.push(text) } };
+    assert.strictEqual(await preview.showLog('Fast Two', 1, deps, { settleMs: 5, pollMs: 5, readyMs: 500 }), true);
+    assert.ok(/^tail -n 200 \/tmp\/station-preview-[a-z0-9]+\.log\r$/.test(typed[0]), typed[0]);
+  });
+  const none = async () => '';
   await check('isRunning forgets a site that stopped', async () => {
     const f = fakes([[22], [22, 4000]]);
-    await preview.run({ room: 'Run Five', termId: 1, command: 'x' }, f.deps, quick);
-    assert.strictEqual(await preview.isRunning('Run Five', async () => new Set([4000])), true);
-    assert.strictEqual(await preview.isRunning('Run Five', async () => new Set([])), false);
-    assert.strictEqual(await preview.isRunning('Run Five', async () => new Set([4000])), false);
+    await preview.run({ room: 'Run Five', command: 'x' }, f.deps, quick);
+    assert.strictEqual(await preview.isRunning('Run Five', async () => new Set([4000]), none), true);
+    assert.strictEqual(await preview.isRunning('Run Five', async () => new Set([]), none), false);
+    assert.strictEqual(await preview.isRunning('Run Five', async () => new Set([4000]), none), false);
+  });
+  await check('after a restart the newest live preview is taken back and older ones are stopped', async () => {
+    const calls = [];
+    const listing = '/tmp/station-preview-aaa.pid 11 3000 old\n/tmp/station-preview-bbb.pid 22 5173 web\nnoise\n';
+    const docker = async (args) => { calls.push(args); return args[3] === undefined || args[2] !== 'bash' ? '' : (args[4].startsWith('for f') ? listing : ''); };
+    assert.strictEqual(await preview.isRunning('Back One', async () => new Set([5173]), docker), true);
+    assert.deepStrictEqual(preview.list(), [{ room: 'Back One', folder: 'web', port: 5173 }]);
+    const killed = calls.filter((args) => args[4] && args[4].includes('kill -TERM'));
+    assert.deepStrictEqual(killed.map((args) => args[6]), ['/tmp/station-preview-aaa.pid']);
+    // Its tab closing stops it as normal.
+    assert.strictEqual(await preview.stop('Back One', docker), true);
+    assert.strictEqual(calls[calls.length - 1][6], '/tmp/station-preview-bbb.pid');
+  });
+  await check('nothing found after a restart means not running', async () => {
+    assert.strictEqual(await preview.isRunning('Back Two', async () => new Set([5173]), async () => ''), false);
+    assert.strictEqual(await preview.isRunning('Back Two', async () => new Set([5173]), async () => { throw new Error('no room'); }), false);
   });
 
   // A downloaded project is a stranger's: nothing of its names or words may reach the typed line.

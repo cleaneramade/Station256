@@ -78,6 +78,7 @@
       <button class="cmd" id="room-btn" hidden><i class="tint-green" id="room-btn-icon" data-i="play"></i><span id="room-btn-label">Open Room</span></button>
       <button class="cmd preview-btn" id="room-preview-btn" hidden><i class="tint-blue" data-i="open"></i><span id="room-preview-label">Preview</span></button>
       <button class="cmd" id="room-new-btn" title="Open another terminal in this room" hidden><i class="tint-blue" data-i="window_console"></i><span>New Room</span></button>
+      <button class="cmd" id="room-auto-btn" title="Says Yes and picks the Recommended choice. Unclear ones still ask you." hidden><i class="tint-blue" id="room-auto-icon" data-i="checkbox_unchecked"></i><span>Auto-approve</span></button>
       <button class="cmd" id="room-close-btn" title="Close every room in this project" hidden><i class="tint-red" data-i="checkbox_unchecked"></i><span id="room-close-label">Close All Rooms</span></button>
       <button class="cmd" id="trash-restore" title="Put back where it came from" hidden><i class="tint-blue" data-i="arrow_left"></i><span>Restore</span></button>
       <button class="cmd" id="trash-empty" title="Delete everything in the Trash forever" hidden><i class="tint-red" data-i="delete"></i><span>Empty Trash</span></button>
@@ -169,9 +170,9 @@
         <img class="splash-logo" src="station-256.png" alt="Station 256">
       </div>
     </div>
+    <div class="menu" id="menu" hidden></div>
   </div>
 
-  <div class="menu" id="menu" hidden></div>
   <dialog class="dialog" id="dialog"></dialog>
 
   <script src="../node_modules/@xterm/xterm/lib/xterm.js"></script>

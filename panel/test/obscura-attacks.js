@@ -78,7 +78,7 @@ module.exports = async function obscuraAttacks({ page, shot, sleep, win }) {
     if (!home.startsWith('/tmp/')) { report(false, 'needs the throwaway HOME'); return; }
     await page(`(() => { window.__hostMark = 1; return true; })()`);
     const windowsBefore = windows();
-    const homeBefore = fs.readdirSync(home).filter((name) => name !== 'Downloads').sort().join('|');
+    const homeBefore = fs.readdirSync(home).filter((name) => !['Music', 'Videos', 'Pictures', 'Documents', 'Downloads'].includes(name)).sort().join('|');
 
     // ---- Layout: a collapsed sidebar and every bar come back exactly; a narrow window still fits.
     await page(`(() => { document.getElementById('nav-toggle').click(); return true; })()`);
@@ -158,16 +158,17 @@ module.exports = async function obscuraAttacks({ page, shot, sleep, win }) {
     // ---- 4a. Downloads with hostile names (before the windows checks, so the storm below is on its own).
     const listeners = [session.defaultSession, win.webContents.session, session.fromPartition('persist:station-editor'), wc.session].map((ses) => ses.listenerCount('will-download'));
     report(listeners.join() === '0,0,0,1', `only Obscura's session handles downloads (default, panel, editor, Obscura: ${listeners})`);
-    const list = () => (fs.existsSync(downloads) ? fs.readdirSync(downloads) : []);
+    // Downloads are sorted into five home folders; names here are "Folder/name".
+    const list = () => ['Music', 'Videos', 'Pictures', 'Documents', 'Downloads'].flatMap((dir) => (fs.existsSync(path.join(home, dir)) ? fs.readdirSync(path.join(home, dir)).map((name) => `${dir}/${name}`) : []));
     const had = list(); // the everyday scene's downloads, when it ran first
     await g(`(() => { for (const kind of ['trav1', 'trav2', 'long', 'longuni', 'ctrl', 'zero']) { const f = document.createElement('iframe'); f.src = '/dl?kind=' + kind; document.body.append(f); } const x = document.createElement('iframe'); x.src = '${other}/dl?kind=xframe'; document.body.append(x); return true; })()`);
     await until(() => list().length >= had.length + 7, 8000);
     await sleep(800);
     const saved = list().filter((name) => !had.includes(name));
-    const badName = saved.filter((name) => /[\x00-\x1f\x7f/\\]/.test(name) || name.startsWith('.') || Buffer.byteLength(name) > 255);
+    const badName = saved.filter((full) => { const name = full.split('/')[1]; return /[\x00-\x1f\x7f/\\]/.test(name) || name.startsWith('.') || Buffer.byteLength(name) > 255; });
     const outside = ['/.bashrc', '/tmp/.bashrc', '/tmp/evil.sh', '/evil.sh', path.join(home, 'evil.sh'), path.join(home, '.bashrc')].filter((file) => fs.existsSync(file) && fs.statSync(file).mtimeMs > Date.now() - 60000);
-    report(saved.length === 7 && badName.length === 0 && outside.length === 0 && fs.readdirSync(home).filter((name) => name !== 'Downloads').sort().join('|') === homeBefore, `7 hostile downloads all land inside Downloads under safe names: ${JSON.stringify(saved.map((name) => (name.length > 28 ? `${name.slice(0, 12)}…(${Buffer.byteLength(name)} bytes)…${name.slice(-6)}` : name)))} bad ${JSON.stringify(badName)} outside ${JSON.stringify(outside)}`);
-    report(saved.includes('zero.bin') && fs.statSync(path.join(downloads, 'zero.bin')).size === 0 && saved.includes('framed.txt'), 'an empty file and one from a cross-origin iframe are saved');
+    report(saved.length === 7 && badName.length === 0 && outside.length === 0 && fs.readdirSync(home).filter((name) => !['Music', 'Videos', 'Pictures', 'Documents', 'Downloads'].includes(name)).sort().join('|') === homeBefore, `7 hostile downloads all land inside the five home folders under safe names: ${JSON.stringify(saved.map((name) => (name.length > 28 ? `${name.slice(0, 12)}…(${Buffer.byteLength(name)} bytes)…${name.slice(-6)}` : name)))} bad ${JSON.stringify(badName)} outside ${JSON.stringify(outside)}`);
+    report(saved.includes('Downloads/zero.bin') && fs.statSync(path.join(downloads, 'zero.bin')).size === 0 && saved.includes('Documents/framed.txt'), 'an empty file and one from a cross-origin iframe are saved');
     report(saved.some((name) => name.length > 150 && name.endsWith('.txt')), 'very long names are cut short and keep their ending');
 
     // ---- 2. Windows.
@@ -214,7 +215,6 @@ module.exports = async function obscuraAttacks({ page, shot, sleep, win }) {
       out.midiSysex = await wait(navigator.requestMIDIAccess({ sysex: true }).then(() => 'GRANTED', (e) => e.name));
       out.notification = await wait(Notification.requestPermission());
       out.geolocation = await wait(new Promise((done) => navigator.geolocation.getCurrentPosition(() => done('GRANTED'), (e) => done('code ' + e.code), { timeout: 2500 })));
-      out.microphone = await wait(navigator.mediaDevices.getUserMedia({ audio: true }).then(() => 'GRANTED', (e) => e.name));
       out.bluetooth = navigator.bluetooth ? await wait(navigator.bluetooth.requestDevice({ acceptAllDevices: true }).then(() => 'GRANTED', (e) => e.name)) : 'none';
       out.usb = navigator.usb ? await wait(navigator.usb.requestDevice({ filters: [] }).then(() => 'GRANTED', (e) => e.name)) : 'none';
       out.hid = navigator.hid ? await wait(navigator.hid.requestDevice({ filters: [] }).then((d) => (d.length ? 'GRANTED' : 'empty'), (e) => e.name)) : 'none';
@@ -227,13 +227,72 @@ module.exports = async function obscuraAttacks({ page, shot, sleep, win }) {
     report(!/GRANTED|granted/.test(JSON.stringify(asked)) && asked.notification === 'denied', `every permission and device request is refused ${JSON.stringify(asked)}`);
     report(asked.pickers === 'undefined,undefined,undefined', `pages cannot ask for a file or folder handle (File System Access: ${asked.pickers})`);
 
+    // ---- 3b. Microphone and camera: only when the owner says yes, site by site.
+    // ask(code, button) runs code in the page and answers the dialog if one opens: button is Block, Allow or Esc.
+    const GUM = (constraints) => `navigator.mediaDevices.getUserMedia(${constraints}).then((s) => { const t = s.getTracks().map((x) => x.kind + ':' + x.readyState + ':' + x.label).join(); s.getTracks().forEach((x) => x.stop()); return 'GRANTED ' + t; }, (e) => e.name + ': ' + e.message)`;
+    const ask = async (code, button) => {
+      const pending = g(code).catch((e) => e.message);
+      const opened = await until(() => page(`!!document.querySelector('dialog[open]')`), 2500);
+      const title = opened ? await page(`document.querySelector('dialog[open] .dialog-title').textContent`) : null;
+      if (opened) await page(`(() => { const d = document.querySelector('dialog[open]'); if (${button === 'Esc'}) d.close(); else [...d.querySelectorAll('.btn')].find((b) => b.textContent === ${JSON.stringify(button)}).click(); return true; })()`);
+      return { title, result: String(await Promise.race([pending, sleep(3000).then(() => 'timeout')])) };
+    };
+    // No camera in the test machine: Chromium answers "not found" before it asks, so the camera's own question is not tested here.
+    const refused = (r) => /^NotAllowedError/.test(r.result);
+    await wc.loadURL(`${base}/ok`);
+    await sleep(300);
+    const query = await g(`navigator.permissions.query({ name: 'microphone' }).then((s) => s.state)`);
+    console.log(`INFO obscuraAttacks: permissions.query(microphone) on a site never asked: ${query}`);
+    let r = await ask(GUM('{ audio: true }'), 'Block');
+    report(/^localhost:\d+ wants to use your microphone$/.test(r.title) && refused(r), `unknown site asks, Block refuses (${r.title} -> ${r.result})`);
+    r = await ask(GUM('{ audio: true }'), 'Block');
+    report(r.title === null && refused(r), `the No is remembered, no second question (${r.title} -> ${r.result})`);
+    await wc.loadURL(`${other}/ok`);
+    await sleep(300);
+    // Closing the dialog is a no that is not remembered: the site is asked again.
+    const escaped = await ask(GUM('{ audio: true }'), 'Esc');
+    r = await ask(GUM('{ audio: true }'), 'Allow');
+    report(/ your microphone$/.test(escaped.title) && refused(escaped) && / your microphone$/.test(r.title), `closing the dialog is a no that is not remembered: asked again (${escaped.title} / ${r.title})`);
+    console.log(`INFO obscuraAttacks: real microphone after Allow: ${r.result}`);
+    report(/wants to use your microphone$/.test(r.title) && !refused(r), `Allow lets the page through to the microphone (${r.title} -> ${r.result.slice(0, 120)})`);
+    const allowed = r.result.split(':')[0];
+    r = await ask(GUM('{ audio: true }'), 'Block');
+    report(r.title === null && r.result.split(':')[0] === allowed, `the Yes is remembered, no second question (${r.title} -> ${r.result.slice(0, 80)})`);
+    r = await ask(`(async () => { const f = document.createElement('iframe'); f.allow = 'microphone'; f.src = '/ok'; document.body.append(f); await new Promise((done) => { f.onload = done; }); return f.contentWindow.${GUM('{ audio: true }')}; })()`, 'Block');
+    report(r.title === null && refused(r), `a frame inside the page never gets the microphone, even though the site was allowed (${r.title} -> ${r.result})`);
+    const { setAiPage } = require('../lib/obscura');
+    setAiPage((id) => id === wc.id);
+    r = await ask(GUM('{ audio: true }'), 'Block');
+    setAiPage(() => false);
+    report(r.title === null && refused(r), `a page an AI is driving never gets the microphone, even though the site was allowed (${r.title} -> ${r.result})`);
+
+    // The lock in the address bar lists the saved answers; each can be changed, and Reset forgets them.
+    const lockText = () => page(`document.querySelector('dialog[open]')?.innerText || ''`);
+    const press = (label) => page(`(() => { const b = [...document.querySelectorAll('dialog[open] .btn')].find((x) => x.textContent === ${JSON.stringify(label)}); b?.click(); return !!b; })()`);
+    await page(`(() => { houseTest.showSiteAccess(window.__t0); return true; })()`);
+    await until(() => page(`!!document.querySelector('dialog[open]')`), 2000);
+    const listed = await lockText();
+    report(/Microphone: Allowed/.test(listed) && /Reload the page for changes to take effect/.test(listed), `the lock dialog lists this site's choices (${listed.replace(/\s+/g, ' ')})`);
+    await press('Block'); // the first row, the microphone
+    await sleep(500);
+    const flipped = await lockText();
+    report(/Microphone: Blocked/.test(flipped), `its switch changes the choice (${flipped.replace(/\s+/g, ' ')})`);
+    await press('Reset');
+    await sleep(500);
+    const emptied = await lockText();
+    report(/Microphone: Ask [(]default[)]/.test(emptied) && /Camera: Ask [(]default[)]/.test(emptied), `Reset forgets them (${emptied.replace(/\s+/g, ' ')})`);
+    await press('Close');
+    r = await ask(GUM('{ audio: true }'), 'Block');
+    report(/your microphone$/.test(r.title), `after Reset the site is asked again (${r.title})`);
+    await wc.loadURL(`${base}/ok`);
+
     // ---- 4b. A download storm.
     await g(`(() => { for (let i = 0; i < 50; i += 1) { const f = document.createElement('iframe'); f.src = '/dl?kind=storm'; document.body.append(f); } return 0; })()`);
     await sleep(3000);
     const started = Date.now();
     await g('1 + 1');
     await page('1 + 1');
-    const storm = list().filter((name) => /^storm/.test(name));
+    const storm = list().filter((name) => /^Documents\/storm/.test(name));
     const stormNote = await page(`window.__t0.note.textContent`);
     report(Date.now() - started < 2000 && storm.length >= 1 && storm.length <= 10 && /many files/.test(stormNote) && windows() === windowsBefore, `50 downloads at once: ${storm.length} saved under ${new Set(storm).size} names, the rest stopped, nothing freezes; the tab says "${stormNote}"`);
     report(!/shell\b|openPath|openExternal|showItemInFolder/.test(fs.readFileSync(path.join(__dirname, '..', 'lib', 'obscura.js'), 'utf8')), 'nothing in lib/obscura.js can open a downloaded file');

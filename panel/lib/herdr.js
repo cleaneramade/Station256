@@ -81,9 +81,10 @@ async function screenOf(name, tab, pane) {
   return out.slice(-20000);
 }
 
-// Presses one key in a pane: only Enter or Esc, the two a notification can answer with.
+// Presses one key in a pane: Enter or Esc (what a notification answers with), or Up or Down (to
+// move to a multiple-choice option for Auto-approve).
 async function pressKey(name, tab, pane, key) {
-  if (!NAME.test(name || '') || !TAB.test(tab || '') || !PANE.test(pane || '') || !['enter', 'esc'].includes(key)) return false;
+  if (!NAME.test(name || '') || !TAB.test(tab || '') || !PANE.test(pane || '') || !['enter', 'esc', 'up', 'down'].includes(key)) return false;
   await run('docker', inTab(name, tab, ['pane', 'send-keys', pane, key]));
   return true;
 }
@@ -219,4 +220,4 @@ function watcher(listRooms, send, houseTerms = null) {
   };
 }
 
-module.exports = { look, watcher, tabAt, agentTabs, roomTabs, screenOf, pressKey, panesOf, plain, ROOM_SCRIPT };
+module.exports = { roomName, look, watcher, tabAt, agentTabs, roomTabs, screenOf, pressKey, panesOf, plain, ROOM_SCRIPT };

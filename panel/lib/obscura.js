@@ -2,17 +2,24 @@
 //
 // A web page is the one thing in Station that isn't ours, and the panel can read every file in the
 // house. So Obscura is built to be shut in: its pages live in a session of their own
-// (persist:obscura) with no preload and no Node, they get no permissions at all (not the camera,
-// not notifications, not the clipboard), they can only go to http(s) addresses, and whatever they
-// download lands in Downloads and is never opened. The page itself sits in a sandbox; this file
+// (persist:obscura) with no preload and no Node, they get no permissions (not notifications, not the
+// clipboard, not the screen) except one: the microphone and camera, and only when the owner says yes
+// for that site (see askOwner below). They can only go to http(s) addresses, and whatever they
+// download lands in a folder for its kind (Downloads if unsure) and is never opened. The page itself sits in a sandbox; this file
 // is the wall around it.
 const { app, BrowserWindow, screen, session, webContents } = require('electron');
 const fs = require('fs');
 const path = require('path');
 
 const PARTITION = 'persist:obscura';
-// The only thing a page may ask for. (The editor's own list is in lib/editor-app.js.)
+// The only thing a page may use without asking. (The editor's own list is in lib/editor-app.js.)
 const PERMITTED = new Set(['fullscreen']);
+// The one thing the owner may allow, site by site: what a page asks for -> what the owner sees.
+const MEDIA = { audio: 'microphone', video: 'camera' };
+const ASK_MS = 60000; // a question nobody answers in a minute counts as no (and is not remembered)
+// https, or a page on this computer (a room's site). Anything else never gets to ask.
+const askable = (origin) => /^https:\/\/[^/]+$/i.test(origin) || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin);
+const originOf = (url) => { try { return new URL(url).origin; } catch { return ''; } };
 // Addresses nothing in Obscura may ever load, even as a picture or a script inside a page.
 const NEVER = /^(file|house-file|station-editor|chrome|chrome-extension|chrome-untrusted|devtools|view-source|filesystem):/i;
 // Where a page may be taken: the web, and a blank page.
@@ -25,6 +32,11 @@ let obscuraSession = null;
 let notify = () => {};
 // A second wall for requests, set by lib/ai-browser.js: (details) => true or false (may wait).
 let guard = () => true;
+// Set by start(): { read() -> { origin: { microphone, camera } }, set(origin, kinds, yes) } (main.js keeps it in settings).
+let siteAccess = { read: () => ({}), set: () => {} };
+const questions = new Map(); // "origin kinds" -> the question now open for it, so a site asking twice is asked once
+const answers = new Map(); // question number -> what to do with the owner's answer
+let asked = 0;
 const setGuard = (fn) => { guard = fn; };
 // Also set by lib/ai-browser.js: (webContentsId) => true for a page an AI is using.
 let aiPage = () => false;
@@ -46,6 +58,16 @@ function tooMany(times, most, ms) {
 // Names still being saved count as taken (their files may not be there yet), and a very long name
 // is cut short but keeps its ending: Linux takes 255 bytes at most.
 const saving = new Set();
+
+// Where a download goes, by what it is: [folder, file ending, or a type start]. Anything else: Downloads.
+const SORTED = [
+  ['Music', /^audio\/|\.(mp3|wav|flac|ogg|m4a|aac|opus)$/i],
+  ['Videos', /^video\/|\.(mp4|mkv|webm|mov|avi|m4v)$/i],
+  ['Pictures', /^image\/|\.(png|jpe?g|gif|webp|bmp|svg|avif|heic|ico)$/i],
+  ['Documents', /\.(pdf|docx?|xlsx?|pptx?|txt|md|csv|odt|rtf|epub)$/i],
+];
+const folderFor = (name, mime = '') => (SORTED.find(([, rule]) => rule.test(mime) || rule.test(name)) || ['Downloads'])[0];
+
 function freeName(dir, wanted) {
   const clean = String(wanted || '').replace(/[\\/:*?"<>|\x00-\x1f\x7f]+/g, '_').replace(/^\.+/, '') || 'download';
   const ext = path.extname(clean).slice(0, 20);
@@ -56,16 +78,74 @@ function freeName(dir, wanted) {
   return name;
 }
 
-// deps: downloadsDir. Sets up the session once; returns what to do with each Obscura page.
-function start({ downloadsDir }) {
+// Asks the owner, in the window that holds this tab, whether site may use kinds. Resolves true or false,
+// or null when nobody answered (no window, a minute passed, the tab closed): that is a no, not remembered.
+function askOwner(contents, site, kinds) {
+  return new Promise((resolve) => {
+    const host = contents.hostWebContents;
+    if (!host || host.isDestroyed()) { resolve(null); return; }
+    asked += 1;
+    const id = asked;
+    const finish = (yes) => {
+      clearTimeout(timer);
+      contents.removeListener('destroyed', gone);
+      answers.delete(id);
+      resolve(yes);
+    };
+    const gone = () => finish(null);
+    const timer = setTimeout(() => { notify(contents, { kind: 'access-over', ask: id }); finish(null); }, ASK_MS);
+    contents.once('destroyed', gone);
+    answers.set(id, finish);
+    notify(contents, { kind: 'access', ask: id, site, kinds });
+  });
+}
+const answerOwner = (id, yes) => answers.get(id)?.(typeof yes === 'boolean' ? yes : null); // Esc or a closed dialog: no answer
+
+// May this page use the microphone and/or camera it asked for (details.mediaTypes)? Never for a page an
+// AI is driving, a frame inside a page, or a site that isn't https; otherwise the owner's saved answer
+// for that site, or one question to the owner (shared by every request from the site meanwhile).
+async function mediaAllowed(contents, details) {
+  const kinds = [...new Set((details.mediaTypes || []).map((type) => MEDIA[type]))];
+  const site = originOf(details.requestingUrl);
+  if (!kinds.length || kinds.includes(undefined) || details.isMainFrame !== true || aiPage(contents.id) || !askable(site)) return false;
+  const saved = () => siteAccess.read()[site] || {};
+  const unknown = kinds.filter((kind) => typeof saved()[kind] !== 'boolean');
+  if (unknown.length) {
+    const key = `${site} ${unknown.join()}`;
+    if (!questions.has(key)) {
+      questions.set(key, askOwner(contents, site, unknown).then((yes) => {
+        questions.delete(key);
+        if (yes !== null) siteAccess.set(site, unknown, yes);
+        return yes;
+      }));
+    }
+    if ((await questions.get(key)) === null) return false;
+  }
+  return kinds.every((kind) => saved()[kind] === true);
+}
+
+// deps: homeDir, siteAccess. Sets up the session once; returns what to do with each Obscura page.
+function start({ homeDir, siteAccess: access }) {
+  if (access) siteAccess = access;
   const ses = session.fromPartition(PARTITION);
   obscuraSession = ses;
   // Looks like one ordinary Chrome on Linux to sites, not "Electron" (see identify below).
   ses.setUserAgent(CHROME_UA, app.getLocale());
 
-  // No permissions: not asked, not remembered, not "granted" by a check either.
-  ses.setPermissionRequestHandler((_contents, permission, callback) => callback(PERMITTED.has(permission)));
-  ses.setPermissionCheckHandler((_contents, permission) => PERMITTED.has(permission));
+  // No permissions, except the microphone and camera when the owner said yes for that site (mediaAllowed).
+  // Everything else (notifications, location, clipboard, the screen) is refused, not asked, not "granted" by a check.
+  ses.setPermissionRequestHandler((contents, permission, callback, details) => {
+    if (permission !== 'media') { callback(PERMITTED.has(permission)); return; }
+    mediaAllowed(contents, details).then(callback, () => callback(false));
+  });
+  // The quiet check never asks: it only repeats a saved yes, with the same limits as above.
+  ses.setPermissionCheckHandler((contents, permission, origin, details) => {
+    if (permission !== 'media') return PERMITTED.has(permission);
+    // origin is Chromium's requestingOrigin string; originOf makes a trailing slash or full URL match the store key.
+    const kind = MEDIA[details?.mediaType];
+    const site = originOf(origin);
+    return !!kind && !!contents && details.isMainFrame === true && !aiPage(contents.id) && askable(site) && siteAccess.read()[site]?.[kind] === true;
+  });
   ses.setDevicePermissionHandler(() => false);
   ses.setDisplayMediaRequestHandler((_request, callback) => { try { callback({}); } catch { /* denied */ } });
   for (const kind of ['select-hid-device', 'select-serial-port', 'select-usb-device']) {
@@ -100,7 +180,7 @@ function start({ downloadsDir }) {
     callback({ requestHeaders: headers });
   });
 
-  // A download goes to Downloads under a free name, and is never opened.
+  // A download goes to the folder for its kind (folderFor) under a free name, and is never opened.
   ses.on('will-download', (event, item, contents) => {
     const id = contents?.id;
     const host = contents?.hostWebContents;
@@ -111,14 +191,15 @@ function start({ downloadsDir }) {
       say('This page tried to download many files at once. The browser stopped the rest.');
       return;
     }
-    const dir = downloadsDir();
+    const folder = folderFor(item.getFilename(), item.getMimeType());
+    const dir = path.join(homeDir(), folder);
     try { fs.mkdirSync(dir, { recursive: true }); } catch { /* the save fails below, and says so */ }
     const name = freeName(dir, item.getFilename());
     saving.add(name);
     item.setSavePath(path.join(dir, name));
     item.once('done', (_done, state) => {
       saving.delete(name);
-      if (state === 'completed') say(`Saved to Downloads: ${name}`);
+      if (state === 'completed') say(`Saved to ${folder}: ${name}`);
       else if (state === 'cancelled') say(`The download of ${name} was cancelled.`);
       else say(`${name} could not be downloaded.`);
     });
@@ -132,24 +213,6 @@ function start({ downloadsDir }) {
 }
 
 const owns = (guest) => !!obscuraSession && guest.session === obscuraSession;
-
-// Websites see a dark look (prefers-color-scheme) in the browser tabs only, to match the owner's Windows
-// browser. Through each page's own debugger: Electron has no per-page setting, and nativeTheme would
-// change Station's own pages too. The look stays through navigation; it is set again as each page loads.
-let dark = false;
-const schemed = new WeakSet(); // pages that were ever given a look
-async function applyScheme(guest) {
-  try {
-    if (!dark && !schemed.has(guest)) return; // never touched: nothing to undo
-    schemed.add(guest);
-    if (!guest.debugger.isAttached()) guest.debugger.attach('1.3');
-    await guest.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: dark ? 'dark' : 'light' }] });
-  } catch { /* the page is gone, or something else holds its debugger: it keeps its look */ }
-}
-function setDark(on) {
-  dark = on === true;
-  webContents.getAllWebContents().filter(owns).forEach(applyScheme);
-}
 
 // The Station windows whose front tab is Obscura (the tab says so). There Ctrl + and Ctrl - zoom the
 // page, even from the address bar, so main.js leaves those keys alone.
@@ -214,10 +277,9 @@ function guestHook(guest, popup = false) {
   // If someone else takes the debugger and lets go, take it back (not while the page is closing).
   guest.debugger.on('detach', () => {
     // A moment later, so a page that is closing is gone by then (taking it back at once hung the close).
-    setTimeout(() => { if (!guest.isDestroyed() && !guest.debugger.isAttached()) identify(guest).then(() => applyScheme(guest)); }, 200);
+    setTimeout(() => { if (!guest.isDestroyed() && !guest.debugger.isAttached()) identify(guest); }, 200);
   });
   identify(guest);
-  guest.on('dom-ready', () => applyScheme(guest));
   guest.on('will-prevent-unload', (event) => event.preventDefault());
   // A link or window.open without a size gets a new Obscura tab. A small window a page opens with a
   // size ("Sign in with Google", PayPal...) stays a real popup, as in Chrome: the page that opened it
@@ -248,6 +310,7 @@ function guestHook(guest, popup = false) {
     else if (!frameMayGoTo(event.url)) event.preventDefault();
   });
   guest.on('before-input-event', (event, input) => {
+    if (!popup && input.type === 'keyDown' && input.key === 'Escape') notify(guest, { kind: 'esc' }); // closes a menu left open
     if (popup || !browserKey(input)) return; // a popup has no tab to take the keys
     event.preventDefault();
     notify(guest, { kind: 'key', key: input.key, ctrl: !!input.control, shift: !!input.shift, alt: !!input.alt });
@@ -272,7 +335,9 @@ function guestHook(guest, popup = false) {
       }
     } catch { /* the page's own spot is used below */ }
     notify(guest, {
-      kind: 'menu', at, x: Number(p.x) || 0, y: Number(p.y) || 0,
+      kind: 'menu', at, x: Number(p.x) || 0, y: Number(p.y) || 0, zoom: guest.hostWebContents?.getZoomFactor?.() || 1,
+      media: p.mediaType === 'image' ? 'image' : '', editable: !!p.isEditable,
+      src: /^https?:\/\//i.test(p.srcURL || '') ? String(p.srcURL).slice(0, 4096) : '',
       link: /^https?:\/\//i.test(p.linkURL || '') ? String(p.linkURL).slice(0, 4096) : '',
       words: String(p.selectionText || '').slice(0, 1 << 20),
       canCut: !!flags.canCut, canPaste: !!flags.canPaste, canSelectAll: flags.canSelectAll !== false,
@@ -334,4 +399,4 @@ function guardAttach(event, webPreferences, params) {
   params.partition = PARTITION;
 }
 
-module.exports = { start, owns, setDark, guardAttach, setFront, isFront, setGuard, setAiPage, PARTITION, mayGoTo, freeName };
+module.exports = { start, answerOwner, owns, guardAttach, setFront, isFront, setGuard, setAiPage, PARTITION, mayGoTo, freeName, folderFor };

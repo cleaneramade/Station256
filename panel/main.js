@@ -7,6 +7,7 @@ const { pathToFileURL } = require('url');
 const { Readable } = require('stream');
 const files = require('./lib/files');
 const edits = require('./lib/edits');
+const termPaths = require('./lib/term-paths');
 const ownerSaves = require('./lib/owner-saves');
 const archive = require('./lib/archive');
 const docx = require('./lib/docx');
@@ -346,6 +347,23 @@ function saveSettings(change) {
   fs.writeFileSync(temporary, JSON.stringify({ ...readSettings(), ...change }));
   fs.renameSync(temporary, SETTINGS_FILE);
 }
+
+// What the owner said yes or no to in the browser, per site: prefs.siteAccess = { "https://x.com": { microphone: true, camera: false } }.
+// set(origin, kinds, yes): yes true/false saves, null forgets those; kinds null forgets the whole site.
+const siteAccess = {
+  read: () => readSettings().prefs?.siteAccess || {},
+  set(origin, kinds, yes) {
+    if (typeof origin !== 'string' || !/^https?:\/\/[^/\s]+$/.test(origin)) return;
+    const all = { ...siteAccess.read() };
+    if (kinds === null) delete all[origin];
+    else {
+      const site = { ...all[origin] };
+      for (const kind of [].concat(kinds)) if (kind === 'microphone' || kind === 'camera') { if (typeof yes === 'boolean') site[kind] = yes; else delete site[kind]; }
+      if (Object.keys(site).length) all[origin] = site; else delete all[origin];
+    }
+    saveSettings({ prefs: { ...(readSettings().prefs || {}), siteAccess: all } });
+  },
+};
 
 function readZoom() {
   const { zoomLevel } = readSettings();
@@ -710,7 +728,7 @@ function cleanTab(tab, forReload = false) {
   // to come back behind the owner's tabs; it never moves to another window.
   if (kind === 'obscura') {
     const url = typeof tab.url === 'string' && /^https?:\/\//i.test(tab.url) && tab.url.length < 8192 ? tab.url : '';
-    if (!tab.ai) return { kind, url };
+    if (!tab.ai) return { kind, url, ...(typeof tab.preview === 'string' && /^[\w .-]{1,100}$/.test(tab.preview) ? { preview: tab.preview } : {}) };
     const { project, session } = tab.ai;
     if (forReload && typeof project === 'string' && /^[\w .-]{1,100}$/.test(project) && typeof session === 'string' && /^(tab-\d{1,4})?$/.test(session)) return { kind, url, ai: { project, session } };
   }
@@ -865,7 +883,7 @@ const scheduler = () => schedules.app(() => {
 });
 
 const agentsWatch = herdr.watcher(() => house.rooms(), (look) => {
-  for (const win of stations) if (!win.isDestroyed() && agentsWatchers.has(win.webContents.id)) win.webContents.send('agents:update', look);
+  for (const win of stations) if (!win.isDestroyed() && agentsWatchers.has(win.webContents.id)) win.webContents.send('agents:update', { ...look, previews: preview.list() });
 }, () => houseTerms.look(terminals.houseList(), houseScreen));
 
 // What a house terminal has on screen, from the window showing it (houseTermScreen in app.js), so
@@ -934,6 +952,8 @@ const agentAlerts = agentAlertsLib.create({
   },
   looking: lookingAt,
   openTab: openAgentTab,
+  autoApprove: (room) => readSettings().prefs?.autoApprove?.[room] === true,
+  log: (line) => logError('alerts', line),
 });
 // A notification clicked in Windows. Open brings Station forward (the helper already did) and goes
 // to the terminal. Approve and Deny answer in the terminal itself, unless the question has changed,
@@ -986,15 +1006,22 @@ const api = {
   cleanupNow: () => runCleanup(),
   setCleanup: (_event, on) => saveSettings({ cleanup: on !== false }),
   prefs: () => readSettings().prefs || {},
-  // Websites see dark in the browser tabs (lib/obscura.js): kept in prefs.darkSites, applied to every page
-  // and told to every window, so each tab's button agrees.
-  obscuraDark: (_event, on) => {
-    const dark = on === true;
-    saveSettings({ prefs: { ...(readSettings().prefs || {}), darkSites: dark } });
-    obscuraApp.setDark(dark);
-    toAll('obscura:dark', dark);
-    return dark;
+  // The browser's right-click actions that only the page's own contents can do (renderer/obscura-tab.js).
+  obscuraDo: (_event, id, what, a, b) => {
+    const guest = Number.isInteger(id) ? webContents.fromId(id) : null;
+    if (!guest || guest.isDestroyed() || !obscuraApp.owns(guest)) return;
+    if (what === 'copyImage') guest.copyImageAt(Math.round(Number(a)) || 0, Math.round(Number(b)) || 0);
+    else if (what === 'saveImage' && /^https?:\/\//i.test(String(a))) guest.downloadURL(String(a)); // lands in Pictures (lib/obscura.js)
   },
+  // Sites running now, for the browser's "Open sites": rooms' (through their paths) and the house's own.
+  openSites: () => [
+    ...ports.list().map(({ room, housePort }) => ({ port: housePort, name: room })),
+    ...ports.houseSites().map(({ port }) => ({ port, name: 'This computer' })),
+  ],
+  // The browser's per-site microphone and camera answers (lib/obscura.js): read for the lock icon's dialog, changed or reset there.
+  obscuraSiteAccess: (_event, origin) => siteAccess.read()[origin] || {},
+  obscuraSetSiteAccess: (_event, origin, kinds, yes) => { siteAccess.set(origin, kinds, yes); return siteAccess.read()[origin] || {}; },
+  obscuraAccessAnswer: (_event, ask, yes) => { obscuraApp.answerOwner(ask, yes); },
   setPrefs: (_event, change) => saveSettings({ prefs: { ...(readSettings().prefs || {}), ...change } }),
   rename: async (_event, target, name) => {
     const [held] = await house.heldByRooms([target]);
@@ -1375,15 +1402,34 @@ const api = {
   pageScale: () => pageScale,
   restartStation: () => { app.relaunch(); app.quit(); return true; },
   openLink: (event, url, termId) => openLink(url, termId, event.sender),
-  // One-click Preview (lib/preview.js): what to do for a project, then run it in its room terminal.
-  previewBegin: async (event, name) => {
-    const found = await preview.begin(name, ports.portsOf);
+  // A path printed in a terminal or typed in the address bar: where it is in the house, if it exists.
+  // The room is the terminal's, or the project the Files tab is in (for /workspace).
+  resolvePath: async (_event, text, termId, project) => {
+    const name = (Number.isInteger(termId) && terminals.roomOf(termId)) || project;
+    const home = require('os').homedir();
+    const base = typeof name === 'string' && name && !/[\\/]/.test(name) && name !== '..' ? path.join(home, 'projects', name) : null;
+    const door = await files.doorIsOpen() ? files.DOOR : null;
+    return termPaths.resolve(text, { home, base, door });
+  },
+  // One-click Preview (lib/preview.js): what to do for a project, then run it in its room's background.
+  // pick is a site's folder the owner chose (remembered per project); ask skips the remembered one.
+  previewBegin: async (event, name, pick, ask) => {
+    const prefs = readSettings().prefs || {};
+    const sites = { ...prefs.previewSite };
+    if (typeof pick === 'string') {
+      sites[name] = pick;
+      saveSettings({ prefs: { ...prefs, previewSite: sites } });
+    }
+    const found = await preview.begin(name, ports.portsOf, typeof pick === 'string' ? pick : ask ? undefined : sites[name]);
     if (found.running) await openPreview(name, `http://localhost:${found.port}`, event.sender);
     return found;
   },
   // Whether a Preview's site is still up, so its button can go back to Preview when it stops.
   previewUp: (_event, name) => preview.isRunning(name, ports.portsOf),
-  previewRun: (event, name, termId, command, missing) => preview.run({ room: name, termId, command, missing }, { terminals, ports, openUrl: (url) => openPreview(name, url, event.sender) }).catch((error) => ({ ok: false, message: error.message })),
+  previewRun: (event, name, folder, command, missing) => preview.run({ room: name, folder, command, missing }, { ports, openUrl: (url) => openPreview(name, url, event.sender) }).catch((error) => ({ ok: false, message: error.message })),
+  // The preview's tab was closed, or Stop on the Agents page: its site ends.
+  previewStop: (_event, name) => preview.stop(name),
+  previewLog: (_event, name, termId) => preview.showLog(name, termId, { terminals }),
   windowsList: (_event, withPictures) => windowsLink.list(withPictures),
   windowsPlace: (_event, id, box, focus) => windowsLink.move(id, box, focus),
   // Windows' snapping and the seams beside Windows apps follow one window: the one you used last.
@@ -1525,8 +1571,12 @@ app.whenReady().then(() => {
   setTimeout(() => video.tidy().catch(() => {}), 90000).unref();
   scheduleCleanup();
   editorGuest = editorApp.start({ files, partOfFile, editableFor: video.editableFor, stopCopy: video.cancel, exportFile: video.exportFile, saveExport: saveEditorExport, openLink: (url) => openLink(url).catch(() => {}) });
-  obscuraGuest = obscuraApp.start({ downloadsDir: () => path.join(app.getPath('home'), 'Downloads') });
-  obscuraApp.setDark(readSettings().prefs?.darkSites === true);
+  obscuraGuest = obscuraApp.start({ homeDir: () => app.getPath('home'), siteAccess });
+  // The light/dark switch for websites is gone: a saved "dark" is forgotten so no page stays dark.
+  if (readSettings().prefs && 'darkSites' in readSettings().prefs) {
+    const { darkSites, ...rest } = readSettings().prefs;
+    saveSettings({ prefs: rest });
+  }
   // shortcut: asks go to the main window (or the last one used); an AI's tab can't be moved to another window (canMove in app.js), so it is always there.
   aiBrowserApp = aiBrowser.start({
     hostWindow: () => [mainWindow, lastFocused, ...BrowserWindow.getAllWindows()].find((win) => win && !win.isDestroyed()),

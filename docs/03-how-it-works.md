@@ -634,19 +634,12 @@ are hidden while it's in front, and come back exactly as they were.
   downloads every 10 s, 3 new tabs every 5 s, and 20 page-opened tabs in all.
 - Ctrl+T opens a new browser tab, Ctrl+W closes the tab. Ctrl+plus zooms the
   page, not Station.
-- **Websites: Light / Websites: Dark** (a moon button in the bar, one setting for
-  every browser tab and window, off by default, kept in `panel.json` as
-  `prefs.darkSites`). On, sites that follow `prefers-color-scheme` show dark, so
-  they look the same as in the owner's Windows browser (Edge is set to dark).
-  Done in main (`lib/obscura.js` `setDark`, call `obscuraDark`): each browser
-  page's own debugger runs `Emulation.setEmulatedMedia`, set again at each
-  `dom-ready`; an AI's tab is the same kind of page, so it follows. Only these
-  pages: `nativeTheme` is global and would change Station's own pages, so it is
-  not used. Limits: a page whose debugger is taken by someone else keeps its
-  look (nothing else attaches today, and the tab offers no Inspect); the button
-  hides in a narrow page with the other extras. Turn it on by hand:
-  `window.house.call('obscuraDark', true)` in Station's page, or set
-  `"darkSites": true` under `prefs` in `~/.config/house/panel.json`.
+- **No dark-sites switch** (removed 2026-11-15): pages always see the light look; a saved
+  `prefs.darkSites` is dropped at start. **Open sites** (monitor button): lists the room sites
+  running (through their paths, `lib/ports.js` `list`) and the house's own localhost ports
+  (`houseSites`); a click opens it in this tab. **Downloads** go to Music, Videos, Pictures,
+  Documents or Downloads by type (`lib/obscura.js` `folderFor`). **Right-click** in a page:
+  link, image, selected words, then Back, Forward, Reload, Print, Inspect.
 - **One honest identity** (2026-11-13): every browser page says "Chromium
   <version> on Linux", which is true, the same in the headers and in the page.
   An earlier version claimed "Google Chrome" and faked `window.chrome` extras;

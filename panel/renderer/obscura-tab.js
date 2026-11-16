@@ -102,14 +102,14 @@ function openObscura(url = null, background = false) {
   // Only while paired (a tab beside this one, app.js): back to two tabs.
   const unsplit = button('panel_right_contract', 'Separate into two tabs');
   unsplit.hidden = true;
-  // Whether websites see a light or a dark look (one setting for every browser tab and window).
-  const dark = button('weather_moon', 'Websites: Light');
+  // The sites running on this computer and in the rooms.
+  const sites = button('desktop', 'Open sites: running on this computer');
   const marks = button('bookmarks', 'Bookmarks');
   const past = button('history', 'History (Ctrl+H)');
   const newTab = button('tab_add', 'New browser tab (Ctrl+T)');
-  for (const extra of [dark, marks, past, newTab]) extra.classList.add('ob-extra'); // hidden in a narrow page (style.css)
+  for (const extra of [sites, marks, past, newTab]) extra.classList.add('ob-extra'); // hidden in a narrow page (style.css)
   const bar = el('div', 'ob-bar');
-  bar.append(back, forward, reload, field, dark, marks, past, newTab, zoomBox, unsplit);
+  bar.append(back, forward, reload, field, sites, marks, past, newTab, zoomBox, unsplit);
   const progress = el('div', 'ob-load');
   progress.hidden = true;
   const note = el('div', 'ob-note');
@@ -151,13 +151,14 @@ function openObscura(url = null, background = false) {
   aiRing.hidden = true;
   const aiGlow = el('div', 'ob-ai-glow');
   aiGlow.hidden = true;
-  stage.append(view, message, aiGlow, aiBanner, aiRing, aiDot);
+  // Over the page while a right-click menu is open: it takes the click that closes the menu (a click in the page itself never reaches Station).
+  stage.append(view, message, el('div', 'ob-shield'), aiGlow, aiBanner, aiRing, aiDot);
   tab.host.append(bar, progress, note, findBar, stage);
   tab.host.hidden = true;
   tab.view = view;
   tab.input = input;
   tab.field = field;
-  Object.assign(tab, { dark, star, marks, past, project, agent, aiStop, aiBanner, aiBannerText, aiDot, aiName, aiRing, aiGlow, zoomText, unsplit, back, forward, reload, lock, progress, note, findBar, findInput, findCount, message });
+  Object.assign(tab, { sites, star, marks, past, project, agent, aiStop, aiBanner, aiBannerText, aiDot, aiName, aiRing, aiGlow, zoomText, unsplit, back, forward, reload, lock, progress, note, findBar, findInput, findCount, message });
   docArea.append(tab.host);
 
   showObscuraStart(tab);
@@ -167,8 +168,8 @@ function openObscura(url = null, background = false) {
   zoomIn.addEventListener('click', () => zoomObscura(tab, 1));
   zoomText.addEventListener('click', () => zoomObscura(tab, 0));
   unsplit.addEventListener('click', () => separateTabs(tab));
-  dark.addEventListener('click', () => call('obscuraDark', !prefs.darkSites).catch(() => {}));
-  showObscuraDark(tab);
+  sites.addEventListener('click', () => showObscuraList(tab, 'sites'));
+  lock.addEventListener('click', () => showSiteAccess(tab));
   star.addEventListener('click', () => toggleBookmark(tab));
   marks.addEventListener('click', () => showObscuraList(tab, 'bookmarks'));
   past.addEventListener('click', () => showObscuraList(tab, 'history'));
@@ -180,17 +181,6 @@ function openObscura(url = null, background = false) {
   if (!background) activateTab(tab);
   return tab;
 }
-
-// The dark-look button says what websites see now, and the moon is lit while they see dark.
-function showObscuraDark(tab) {
-  tab.dark.title = prefs.darkSites ? 'Websites: Dark' : 'Websites: Light';
-  tab.dark.setAttribute('aria-label', tab.dark.title);
-  tab.dark.classList.toggle('on', prefs.darkSites);
-}
-window.house.on('obscura:dark', (on) => {
-  prefs.darkSites = on === true;
-  state.tabs.filter((tab) => tab.kind === 'obscura').forEach(showObscuraDark);
-});
 
 // What the info area on the right says. Other features fill it: { project: 'Name', agent: 'Claude' }.
 // No project: "Not tied to a project". No agent: its chip stays hidden.
@@ -422,20 +412,34 @@ function showObscuraList(tab, kind) {
   const pop = el('div', 'ob-pop');
   pop.dataset.kind = kind;
   const head = el('div', 'ob-pop-head');
-  head.append(el('strong', '', kind === 'history' ? 'History' : 'Bookmarks'));
+  head.append(el('strong', '', { history: 'History', sites: 'Open sites' }[kind] || 'Bookmarks'));
   const search = el('input', 'ob-pop-search');
   search.type = 'text';
   search.placeholder = kind === 'history' ? 'Search history' : 'Search bookmarks';
   search.spellcheck = false;
   const clear = el('button', 'ob-pop-clear', kind === 'history' ? 'Clear history' : 'Remove all');
   clear.type = 'button';
-  head.append(search, clear);
+  if (kind !== 'sites') head.append(search, clear);
   const list = el('div', 'ob-pop-list');
   pop.append(head, list);
   const close = () => { pop.remove(); tab.pop = null; document.removeEventListener('mousedown', outside, true); };
-  const outside = (event) => { if (!pop.contains(event.target) && !tab.marks.contains(event.target) && !tab.past.contains(event.target)) close(); };
+  const outside = (event) => { if (!pop.contains(event.target) && !tab.marks.contains(event.target) && !tab.past.contains(event.target) && !tab.sites.contains(event.target)) close(); };
   const source = () => (kind === 'history' ? obscuraHistory : obscuraBookmarks);
+  // Sites running now (main.js openSites): a room's, or one the house itself serves. A click goes there in this tab.
+  const drawSites = () => call('openSites').catch(() => []).then((found) => {
+    if (tab.pop !== pop) return;
+    list.replaceChildren(...(found.length ? found.map((site) => {
+      const row = el('div', 'ob-pop-row');
+      const go = el('button', 'ob-pop-go');
+      go.type = 'button';
+      go.append(el('span', 'ob-pop-title', `localhost:${site.port}`), el('span', 'ob-pop-host', site.name));
+      go.addEventListener('click', () => { close(); goObscura(tab, `http://localhost:${site.port}`); });
+      row.append(go);
+      return row;
+    }) : [el('div', 'ob-pop-empty', 'No sites running')]));
+  });
   const draw = () => {
+    if (kind === 'sites') { drawSites(); return; }
     const words = search.value.trim().toLowerCase();
     const shown = source().filter((page) => !words || `${page.title || ''} ${page.url}`.toLowerCase().includes(words)).slice(0, 80);
     if (!shown.length) { list.replaceChildren(el('div', 'ob-pop-empty', words ? 'Nothing matches.' : kind === 'history' ? 'Pages you visit show up here.' : 'Press the star in the address bar to keep a page here.')); return; }
@@ -665,10 +669,32 @@ function obscuraMenu(tab, event) {
   const box = tab.view.getBoundingClientRect();
   const view = tab.view;
   const items = [];
+  const web = (url) => /^https?:\/\//i.test(url || '');
+  // Where the mouse is in Station's page: main reads it from the screen. If that isn't inside the
+  // page (some displays don't say where the mouse is), the page's own spot is used, in Station's pixels.
+  const near = event.at && event.at.x >= box.left && event.at.x <= box.right && event.at.y >= box.top && event.at.y <= box.bottom;
+  const at = near ? event.at : { x: box.left + event.x / (event.zoom || 1), y: box.top + event.y / (event.zoom || 1) };
+  const doIt = (what, a, b) => call('obscuraDo', tab.wcId, what, a, b).catch(() => {});
   if (event.link) {
     items.push(
       { label: 'Open Link in New Tab', icon: 'tab_add', run: () => openInObscura(event.link) },
-      { label: 'Copy Link', icon: 'link', run: () => call('clipboardWrite', event.link) },
+      { label: 'Copy Link Address', icon: 'link', run: () => call('clipboardWrite', event.link) },
+      '-',
+    );
+  }
+  if (event.media === 'image') {
+    items.push(
+      { label: 'Open Image in New Tab', icon: 'tab_add', disabled: !web(event.src), run: () => openInObscura(event.src) },
+      { label: 'Save Image', icon: 'save', disabled: !web(event.src), run: () => doIt('saveImage', event.src) },
+      { label: 'Copy Image', icon: 'image', run: () => doIt('copyImage', event.x, event.y) },
+      { label: 'Copy Image Address', icon: 'link', disabled: !web(event.src), run: () => call('clipboardWrite', event.src) },
+      '-',
+    );
+  }
+  if (event.words.trim() && !event.editable) {
+    const shown = event.words.trim().replace(/\s+/g, ' ');
+    items.push(
+      { label: `Search Google for "${shown.length > 24 ? `${shown.slice(0, 23)}…` : shown}"`, icon: 'search', run: () => openInObscura(`https://www.google.com/search?q=${encodeURIComponent(shown.slice(0, 300))}`) },
       '-',
     );
   }
@@ -676,9 +702,11 @@ function obscuraMenu(tab, event) {
     { label: 'Back', icon: 'arrow_left', disabled: !view.canGoBack(), run: () => view.goBack() },
     { label: 'Forward', icon: 'arrow_right', disabled: !view.canGoForward(), run: () => view.goForward() },
     { label: 'Reload', icon: 'arrow_clockwise', run: () => reloadObscura(tab) },
+    '-',
+    { label: 'Print…', run: () => { try { view.print(); } catch { /* not ready */ } } },
+    { label: 'Inspect', icon: 'code', run: () => { try { view.inspectElement(Math.round(event.x), Math.round(event.y)); } catch { /* not ready */ } } },
   );
-  // event.at is where the mouse is in Station's own page (lib/obscura.js reads it from the screen).
-  rightClickMenu(event.at ? event.at.x : box.left + event.x, event.at ? event.at.y : box.top + event.y, {
+  rightClickMenu(at.x, at.y, {
     cut: event.canCut ? () => view.cut() : null,
     copy: event.words ? () => call('clipboardWrite', event.words) : null,
     paste: event.canPaste ? () => view.paste() : null,
@@ -745,10 +773,13 @@ window.house.on('obscura:event', (event) => {
   if (!tab) return;
   if (event.kind === 'key') obscuraKey(tab, event);
   else if (event.kind === 'menu') obscuraMenu(tab, event);
+  else if (event.kind === 'esc') closeMenu();
   else if (event.kind === 'zoom') zoomObscura(tab, event.direction);
   // A page's own request for a tab; never more than 20 Obscura tabs that way.
   else if (event.kind === 'open' && typeof event.url === 'string' && state.tabs.filter((other) => other.kind === 'obscura').length < 20) openInObscura(event.url);
   else if (event.kind === 'note' && typeof event.note === 'string') obscuraNote(tab, event.note);
+  else if (event.kind === 'access') askAccess(event);
+  else if (event.kind === 'access-over') { if (accessOpen === event.ask) dialog.close(); else accessOver.add(event.ask); } // main gave up: close its dialog, or skip it if still queued
   else if (event.kind === 'blocked') obscuraNote(tab, 'The browser only opens web pages (http and https).');
   else if (event.kind === 'favicon' && /^data:image\//.test(event.src || '')) {
     setObscuraTitle(tab, tab.el.querySelector('.tab-title').textContent, event.src);
@@ -869,6 +900,57 @@ window.house.on('aibrowser:ask', async ({ ask, project, agent, site, kind }) => 
   call('aiBrowserAnswer', ask, yes === true);
 });
 
+// A site asks for the microphone and/or camera (lib/obscura.js). Block or Allow is remembered for that
+// site; Esc or a minute without an answer is a no that isn't remembered. One question at a time.
+const accessOver = new Set(); // questions main has already given up on
+let accessOpen = 0;
+async function askAccess({ ask, site, kinds }) {
+  while (dialog.open) await new Promise((resolve) => { setTimeout(resolve, 300); });
+  if (accessOver.delete(ask)) return;
+  accessOpen = ask;
+  const yes = await showDialog((host, done) => {
+    dialogFrame(host, `${obscuraHost(site)} wants to use your ${kinds.join(' and ')}`, 'Only allow sites you trust. You can change this later from the lock in the address bar.');
+    dialogButtons(host, [
+      { label: 'Block', onClick: () => done(false) },
+      { label: 'Allow', primary: true, onClick: () => done(true) },
+    ]);
+  });
+  accessOpen = 0;
+  call('obscuraAccessAnswer', ask, yes);
+}
+
+// The lock in the address bar: what this site was allowed or blocked, each one changeable, or forgotten.
+async function showSiteAccess(tab) {
+  let site;
+  try { site = new URL(tab.url).origin; } catch { return; }
+  let saved = await call('obscuraSiteAccess', site).catch(() => ({}));
+  await showDialog((host, done) => {
+    const draw = () => {
+      host.replaceChildren();
+      const kinds = [['microphone', 'Microphone'], ['camera', 'Camera']];
+      const any = kinds.some(([kind]) => typeof saved[kind] === 'boolean');
+      dialogFrame(host, obscuraHost(site), 'Reload the page for changes to take effect.');
+      for (const [kind, label] of kinds) {
+        const state = typeof saved[kind] !== 'boolean' ? 'Ask (default)' : saved[kind] ? 'Allowed' : 'Blocked';
+        const row = el('div', 'ob-access', `${label}: ${state}`);
+        for (const [text, yes] of [['Allow', true], ['Block', false]]) {
+          if (saved[kind] === yes) continue;
+          const button = el('button', 'btn', text);
+          button.type = 'button';
+          button.addEventListener('click', async () => { saved = await call('obscuraSetSiteAccess', site, kind, yes).catch(() => saved); draw(); });
+          row.append(button);
+        }
+        host.append(row);
+      }
+      dialogButtons(host, [
+        ...(any ? [{ label: 'Reset', onClick: async () => { saved = await call('obscuraSetSiteAccess', site, null, null).catch(() => saved); draw(); } }] : []),
+        { label: 'Close', primary: true, onClick: () => done() },
+      ]);
+    };
+    draw();
+  });
+}
+
 // The AI's cursor: it glides to where the AI is about to click or type (lib/ai-browser.js). The
 // numbers are the guest's own pixels, so they are divided by this window's zoom to land on the page.
 window.house.on('aibrowser:pointer', ({ id, x, y, doing }) => {
@@ -938,7 +1020,8 @@ function obscuraDescription(tab) {
     const now = tab.view.getURL();
     if (/^https?:\/\//i.test(now)) url = now;
   } catch { /* not loaded yet */ }
-  return { kind: 'obscura', url, ai: tab.aiOf ? { project: tab.aiOf, session: tab.aiSession || '' } : null }; // main only lets this through for a reload, never another window
+  const preview = tab.previewOf && !tab.previewOf.startsWith('file:') ? tab.previewOf : undefined; // a project's Preview page keeps its tie, so closing it still stops its site
+  return { kind: 'obscura', url, preview, ai: tab.aiOf ? { project: tab.aiOf, session: tab.aiSession || '' } : null }; // main only lets this through for a reload, never another window
 }
 
-window.houseTest = Object.assign(window.houseTest || {}, { sleepCheck, aiAtWork, aiGlide, aiResting, zoomObscura, hostZoom, pageScale: () => pageScale, openInObscura, openObscura, obscuraAddress, setObscuraInfo, stopAiBrowser, rememberObscuraVisit, toggleBookmark, showObscuraList, bookmarks: () => obscuraBookmarks, history: () => obscuraHistory, ready: () => obscuraSitesReady() });
+window.houseTest = Object.assign(window.houseTest || {}, { showSiteAccess, sleepCheck, aiAtWork, aiGlide, aiResting, zoomObscura, hostZoom, pageScale: () => pageScale, openInObscura, openObscura, obscuraAddress, setObscuraInfo, stopAiBrowser, rememberObscuraVisit, toggleBookmark, showObscuraList, bookmarks: () => obscuraBookmarks, history: () => obscuraHistory, ready: () => obscuraSitesReady() });

@@ -195,6 +195,18 @@ async function reach(room, port) {
 const list = () => [...forwards.values()].filter((forward) => !forward.ended)
   .map(({ room, port, housePort }) => ({ room, port, housePort }));
 
+// Sites the house itself serves on localhost: [{ port }]. Not the rooms' paths (list), and not the
+// high numbers programs pick for themselves (shortcut: anything under 32768 counts, even if it isn't a website).
+function houseSites() {
+  const own = new Set(list().map((forward) => forward.housePort));
+  try {
+    const text = fs.readFileSync('/proc/net/tcp', 'utf8') + fs.readFileSync('/proc/net/tcp6', 'utf8');
+    return [...listening(text)].filter((port) => port >= 1024 && port < 32768 && !own.has(port)).sort((a, b) => a - b).map((port) => ({ port }));
+  } catch {
+    return [];
+  }
+}
+
 // The ports a room listens on right now, or null if it can't be looked at. For Preview, to tell
 // which port a just-started site took.
 async function portsOf(room) {
@@ -210,4 +222,4 @@ async function portsOf(room) {
   }
 }
 
-module.exports = { start, stop, reach, list, listening, poll, portsOf };
+module.exports = { start, stop, reach, list, listening, poll, portsOf, houseSites };

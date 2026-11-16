@@ -196,8 +196,14 @@ async function cpuPercent() {
   return Math.round(100 * (1 - (idle - previous.idle) / (total - previous.total)));
 }
 
+// Station 256 and Linux need these (ps cuts names at 15 letters): ending one would close the app,
+// its terminals or its rooms. Like Windows processes in Task Manager, they can't be ended here.
+const NEEDED = new Set(['electron', 'herdr', 'bash', 'sh', 'dash', 'zsh', 'fish', 'ssh', 'sshd', 'sshd-session',
+  'station-tab-she', 'docker-init', 'sleep', 'systemd', '(sd-pam)', 'dbus-daemon', 'dconf-service', 'at-spi-bus-laun',
+  'at-spi2-registr', 'pulseaudio', 'pipewire', 'wireplumber']);
+
 // Programs, with every copy of the same one added up (ten "node" processes show as one line),
-// busiest first. Copies that belong to someone else can't be ended from here.
+// ones you can end first, then busiest first. Copies that belong to someone else can't be ended.
 async function processes() {
   const out = await run('ps', ['-eo', 'pid=,user:12=,pcpu=,rss=,comm=', '--sort=-pcpu']);
   const groups = new Map();
@@ -205,18 +211,27 @@ async function processes() {
     const [pid, user, cpu, rss, ...rest] = line.trim().split(/\s+/);
     const command = rest.join(' ');
     if (command === 'ps') return; // this list's own check
-    const group = groups.get(command) || { command, count: 0, cpu: 0, memoryMb: 0, pids: [], mine: true, users: new Set() };
+    const group = groups.get(command) || { command, count: 0, cpu: 0, kb: [], pids: [], mine: true, users: new Set() };
     group.count += 1;
     group.cpu += Number(cpu) || 0;
-    group.memoryMb += Number(rss) / 1024;
+    group.kb.push(Number(rss));
     group.pids.push(Number(pid));
     group.users.add(user);
     if (user !== os.userInfo().username) group.mine = false;
     groups.set(command, group);
   });
+  // Copies of one program share most of their memory (Electron's copies share Chromium), so each
+  // copy counts only its fair part of what it shares (PSS), as Windows does. Other users' copies
+  // can't be read that closely, so theirs stay as before (RSS).
+  await Promise.all([...groups.values()].map(async (group) => {
+    const kb = await Promise.all(group.pids.map((pid, i) => fs.readFile(`/proc/${pid}/smaps_rollup`, 'utf8')
+      .then((text) => Number(/^Pss:\s+(\d+)/m.exec(text)[1]), () => group.kb[i])));
+    group.memoryMb = kb.reduce((sum, value) => sum + value, 0) / 1024;
+  }));
   return [...groups.values()]
-    .map((group) => ({ ...group, cpu: Math.round(group.cpu * 10) / 10, memoryMb: Math.round(group.memoryMb), users: [...group.users] }))
-    .sort((a, b) => b.cpu - a.cpu || b.memoryMb - a.memoryMb);
+    .map(({ kb, ...group }) => ({ ...group, canEnd: group.mine && !NEEDED.has(group.command), cpu: Math.round(group.cpu * 10) / 10, memoryMb: Math.round(group.memoryMb), users: [...group.users] }))
+    // Ones you can end come first, as in Task Manager, so none hide under "Show all".
+    .sort((a, b) => b.canEnd - a.canEnd || b.cpu - a.cpu || b.memoryMb - a.memoryMb);
 }
 
 // How hard each open room is working. Docker takes a second or two to measure, so the last
@@ -290,7 +305,9 @@ async function endProcess(pids) {
   if (!list.length || list.some((pid) => !Number.isInteger(pid) || pid < 2)) throw new Error('Not a valid process.');
   const failed = [];
   for (const pid of list) {
-    if (pid === process.pid || (await readOr(`/proc/${pid}/comm`, '')) === 'electron') throw new Error('That\'s Station 256 itself. To end it, close the window.');
+    const comm = (await readOr(`/proc/${pid}/comm`, '')).trim(); // the file ends in a line break
+    if (NEEDED.has(comm) && comm !== 'electron') throw new Error('Station 256 needs this one to keep running.');
+    if (pid === process.pid || comm === 'electron') throw new Error('That\'s Station 256 itself. To end it, close the window.');
     try { process.kill(pid, 'SIGTERM'); } catch (error) { if (error.code !== 'ESRCH') failed.push(pid); }
   }
   if (failed.length) throw new Error(`${failed.length} of them couldn't be ended.`);

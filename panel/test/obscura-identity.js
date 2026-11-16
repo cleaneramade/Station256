@@ -56,8 +56,7 @@ module.exports = async function obscuraIdentity({ page, sleep }) {
   try {
     await page(`(() => { houseTest.openInObscura('${url}'); return true; })()`);
     await waitFor(`houseTest.state.active.kind === 'obscura' && houseTest.state.active.el.querySelector('.tab-title').textContent === 'Identity'`);
-    for (const on of [false, true, false]) {
-      await page(`window.house.call('obscuraDark', ${on}).then(() => true)`);
+    for (const on of [false]) { // the dark switch is gone: pages always see light
       await sleep(500);
       await page(`(() => { const t = houseTest.state.active; t.input.value = '${url}?n=${Date.now()}'; t.input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' })); return true; })()`);
       await sleep(800);

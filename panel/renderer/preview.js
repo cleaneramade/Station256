@@ -1,5 +1,5 @@
 // One-click Preview (the work is in lib/preview.js): a project's Preview button starts its site in
-// its room, in a terminal tab you can see, and opens the page. Loaded after app.js.
+// its room's background and opens the page. Right-click picks a site again. Loaded after app.js.
 const previewing = new Map(); // project name → 'starting' | 'running'
 
 const previewLabel = (name) => (previewing.get(name) === 'starting' ? 'Starting…' : previewing.get(name) === 'running' ? 'Open Preview' : 'Preview');
@@ -25,12 +25,34 @@ function previewSet(name, value) {
   });
 }
 
-async function previewProject(name) {
+// Several sites in one project: one button each, "folder — what runs".
+const pickSite = (sites) => showDialog((host, done) => {
+  dialogFrame(host, `${sites.length} sites found`, 'Pick one to preview.');
+  const what = (site) => `${site.folder || 'Top folder'} — ${site.command.split(' && ').pop()}`;
+  dialogButtons(host, [
+    ...sites.map((site) => ({ label: what(site).slice(0, 60), primary: true, onClick: () => done(site.folder) })),
+    { label: 'Cancel', onClick: () => done(null) },
+  ]);
+});
+
+// Opens a terminal in the project's room and shows the end of the failed site's log there.
+async function previewLog(name) {
+  const tab = await openTerminal({ room: name });
+  if (tab && tab.termId) await call('previewLog', name, tab.termId);
+}
+
+// ask: the owner right-clicked the button, so the remembered site is asked about again.
+async function previewProject(name, ask = false) {
   if (previewing.get(name) === 'starting') return;
   previewSet(name, 'starting');
   let state = null;
   try {
-    const found = await call('previewBegin', name);
+    let found = await call('previewBegin', name, undefined, ask);
+    if (found.choose) {
+      const folder = await pickSite(found.choose);
+      if (typeof folder !== 'string') return;
+      found = await call('previewBegin', name, folder);
+    }
     if (found.running) {
       state = 'running';
       return;
@@ -39,23 +61,22 @@ async function previewProject(name) {
       toast(found.message);
       return;
     }
-    // The room starts here if it isn't open, and the command is typed into its new terminal.
-    const tab = await openTerminal({ room: name, cwd: found.folder });
-    if (!tab || !tab.termId) {
-      toast('Station couldn\'t open this project\'s room, so Preview didn\'t start.');
-      return;
-    }
-    const result = await call('previewRun', name, tab.termId, found.command, found.missing);
+    // Runs in the room's background: no terminal tab, the button just says Starting…
+    const result = await call('previewRun', name, found.folder, found.command, found.missing);
     if (result.ok) state = 'running';
-    else toast(result.message);
+    else toast(result.message, 'Show log', () => previewLog(name));
   } catch (error) {
     toast(cleanError(error));
   } finally {
     previewSet(name, state);
   }
 }
+document.addEventListener('contextmenu', (event) => {
+  const button = event.target.closest?.('.preview-btn');
+  if (button && button.dataset.project) previewProject(button.dataset.project, true);
+});
 
-// A site that was stopped (Ctrl+C, room closed) takes its "Open Preview" back to "Preview".
+// A site that was stopped (Stop, room closed) takes its "Open Preview" back to "Preview".
 setInterval(async () => {
   for (const [name, value] of [...previewing]) {
     if (value !== 'running') continue;

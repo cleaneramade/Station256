@@ -145,7 +145,6 @@ module.exports = async function obscura({ page, shot, sleep, win }) {
     // Permissions.
     const asked = await inGuest(`(async () => {
       const out = {};
-      out.camera = await navigator.mediaDevices.getUserMedia({ video: true }).then(() => 'GRANTED', (e) => e.name);
       out.notify = await Notification.requestPermission();
       out.geo = await new Promise((done) => navigator.geolocation.getCurrentPosition(() => done('GRANTED'), (e) => done('code ' + e.code), { timeout: 4000 }));
       out.clip = await navigator.clipboard.readText().then(() => 'GRANTED', (e) => e.name);
@@ -160,17 +159,52 @@ module.exports = async function obscura({ page, shot, sleep, win }) {
     const fullscreen = await inGuest(`document.documentElement.requestFullscreen().then(() => 'allowed', (e) => 'refused ' + e.name)`).catch((e) => `error ${e.message}`);
     console.log(`INFO obscura: fullscreen request without a key press: ${fullscreen}`);
 
+    // The microphone and camera are the one thing the owner can allow, site by site. A site nobody has
+    // answered asks in a dialog; Block is a no, and it is remembered (no second question).
+    const query = await inGuest(`navigator.permissions.query({ name: 'microphone' }).then((s) => s.state)`);
+    console.log(`INFO obscura: permissions.query(microphone) on a site never asked: ${query}`);
+    const ask = async (constraints, button) => {
+      const pending = inGuest(`navigator.mediaDevices.getUserMedia(${constraints}).then(() => 'GRANTED', (e) => e.name)`).catch((e) => e.message);
+      const opened = await waitFor(`!!document.querySelector('dialog[open]')`, 2500);
+      const title = opened ? await page(`document.querySelector('dialog[open] .dialog-title').textContent`) : null;
+      if (opened) await page(`(() => { [...document.querySelectorAll('dialog[open] .btn')].find((b) => b.textContent === ${JSON.stringify(button)}).click(); return true; })()`);
+      return { title, result: await Promise.race([pending, sleep(3000).then(() => 'timeout')]) };
+    };
+    const micFirst = await ask('{ audio: true }', 'Block');
+    report(/^localhost:\d+ wants to use your microphone$/.test(micFirst.title) && micFirst.result === 'NotAllowedError', `an unknown site asks first, and Block refuses it (${micFirst.title} -> ${micFirst.result})`);
+    const micAgain = await ask('{ audio: true }', 'Block');
+    report(micAgain.title === null && micAgain.result === 'NotAllowedError', `the No is remembered: no second question (${micAgain.title} -> ${micAgain.result})`);
+    const camAsk = await ask('{ video: true }', 'Block'); // no camera here: Chromium says "not found" before it asks
+    report(camAsk.result === 'NotAllowedError' ? / wants to use your camera$/.test(camAsk.title) : camAsk.result === 'NotFoundError' && camAsk.title === null, `the camera is refused or, with no camera device, not found (${camAsk.title} -> ${camAsk.result})`);
+
+    // The lock dialog lists Microphone and Camera even for a site never asked, and Allow there is enough.
+    const lockRows = async () => page(`(() => { const d = document.querySelector('dialog[open]'); return d ? [...d.querySelectorAll('.ob-access')].map((r) => r.textContent) : null; })()`);
+    const lockClick = (label, nth = 0) => page(`(() => { const b = [...document.querySelectorAll('dialog[open] .btn')].filter((x) => x.textContent === ${JSON.stringify(label)})[${nth}]; if (b) b.click(); return !!b; })()`);
+    await page(`houseTest.state.active.lock.click(); 0`);
+    await waitFor(`!!document.querySelector('dialog[open]')`, 2500);
+    await lockClick('Reset'); // forget the Blocks above: the site is "never asked" again
+    await sleep(300);
+    const rows = await lockRows();
+    report(rows?.length === 2 && /^Microphone: Ask \(default\)/.test(rows[0]) && /^Camera: Ask \(default\)/.test(rows[1]), `lock dialog shows both rows for a never-asked site: ${JSON.stringify(rows)}`);
+    await lockClick('Allow', 0); // the microphone row comes first
+    await sleep(300);
+    await lockClick('Close');
+    const mic = await ask('{ audio: true }', 'Block'); // no dialog; with no microphone device Chromium says NotFoundError
+    report(mic.title === null && (mic.result === 'GRANTED' || mic.result === 'NotFoundError'), `Allow from the lock dialog lets getUserMedia through with no question (${mic.title} -> ${mic.result})`);
+    const granted = await inGuest(`navigator.permissions.query({ name: 'microphone' }).then((s) => s.state)`);
+    report(granted === 'granted', `permissions.query(microphone) says granted after Allow (${granted})`);
+
     // A download.
-    const downloads = path.join(os.homedir(), 'Downloads');
+    const downloads = path.join(os.homedir(), 'Documents'); // a .txt file is sorted into Documents
     for (const n of [1, 2]) {
       await inGuest(`location.href = '${base}/dl'; 0`);
-      await waitFor(`/Saved to Downloads/.test(houseTest.state.active.note.textContent) && !houseTest.state.active.note.hidden`, 4000);
+      await waitFor(`/Saved to Documents/.test(houseTest.state.active.note.textContent) && !houseTest.state.active.note.hidden`, 4000);
       await sleep(600);
     }
     const saved = fs.readdirSync(downloads);
     const noteText = await page(`houseTest.state.active.note.textContent`);
-    report(saved.includes('_evil file.txt') && saved.includes('_evil file (1).txt') && !fs.existsSync(path.join(os.homedir(), 'evil file.txt')) && !fs.existsSync(path.join(os.homedir(), '..', 'evil file.txt')), `downloads saved with unique names in ~/Downloads: ${JSON.stringify(saved)}`);
-    report(/^Saved to Downloads: _evil file( \(1\))?\.txt$/.test(noteText), `notice in the tab: "${noteText}"`);
+    report(saved.includes('_evil file.txt') && saved.includes('_evil file (1).txt') && !fs.existsSync(path.join(os.homedir(), 'evil file.txt')) && !fs.existsSync(path.join(os.homedir(), '..', 'evil file.txt')), `downloads saved with unique names in ~/Documents: ${JSON.stringify(saved)}`);
+    report(/^Saved to Documents: _evil file( \(1\))?\.txt$/.test(noteText), `notice in the tab: "${noteText}"`);
     report(BrowserWindow.getAllWindows().length === windowsBefore && (await inGuest('location.href')) === `${base}/ok`, 'download does not navigate or open anything');
     await shot('obscura-download');
 

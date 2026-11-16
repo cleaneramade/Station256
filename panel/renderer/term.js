@@ -156,6 +156,23 @@ function openLink(text, id) {
 // Addresses with http:// or https://, and bare localhost:PORT ones, as programs print them.
 const LINK = /\bhttps?:\/\/[^\s<>"'`]+|\b(?:localhost|127\.0\.0\.1|0\.0\.0\.0):\d{2,5}\b(?:\/[^\s<>"'`]*)?/gi;
 
+// Folders and files as programs print them: /workspace, /home, ~/, L:\, C:\ and \\wsl.localhost\ ones.
+// Spaces end a path (shortcut: a name with a space isn't found, unless a program quotes it).
+const PATH = /(?<![\w.\/\\~:$-])(?:\/(?:workspace|home)(?![\w-])[^\s<>"'`]*|~\/[^\s<>"'`]*|[CcLl]:[\\/][^\s<>"'`]*|\\\\wsl(?:\.localhost|\$)\\[^\s<>"'`]*)/g;
+
+// Whether a printed path exists, and where: asked of the house, and remembered for a few seconds so
+// moving the mouse over the same line doesn't ask again.
+const pathAnswers = new Map();
+function lookUpPath(text, id) {
+  const key = `${id}\n${text}`;
+  const known = pathAnswers.get(key);
+  if (known && Date.now() - known.time < 5000) return known.answer;
+  const answer = window.house.call('resolvePath', text, id).catch(() => null);
+  pathAnswers.set(key, { time: Date.now(), answer });
+  if (pathAnswers.size > 300) pathAnswers.delete(pathAnswers.keys().next().value);
+  return answer;
+}
+
 // A link ends before closing punctuation, unless that's part of it, like the ) in a page name.
 function trimLink(text) {
   let end = text.length;
@@ -212,20 +229,45 @@ function linkFinder(term, id) {
         }
       }
       const links = [];
+      const webSpans = [];
+      const rangeOf = (index, length) => {
+        const first = cells[index];
+        const last = cells[index + length - 1];
+        if (!first || !last || last.y < y || first.y > y) return null;
+        return { start: { x: first.x, y: first.y }, end: { x: last.x + last.w - 1, y: last.y } };
+      };
       for (const match of text.matchAll(LINK)) {
         const found = trimLink(match[0]);
         if (!found) continue;
-        const first = cells[match.index];
-        const last = cells[match.index + found.length - 1];
-        if (!first || !last || last.y < y || first.y > y) continue;
+        webSpans.push([match.index, match.index + match[0].length]);
+        const range = rangeOf(match.index, found.length);
+        if (!range) continue;
         links.push({
-          range: { start: { x: first.x, y: first.y }, end: { x: last.x + last.w - 1, y: last.y } },
+          range,
           text: found,
           decorations: { pointerCursor: true, underline: true },
           activate: (_event, linkText) => openLink(linkText, id),
         });
       }
-      callback(links.length ? links : undefined);
+      // Paths: underlined only when they exist (asked of the house), so random text isn't.
+      const asked = [];
+      for (const match of text.matchAll(PATH)) {
+        if (webSpans.some(([from, to]) => match.index < to && match.index + match[0].length > from)) continue;
+        // Leave off a ":12:3" line and column, and punctuation after the path.
+        const found = trimLink(trimLink(match[0]).replace(/:\d+(?::\d+)?$/, ''));
+        const range = found && rangeOf(match.index, found.length);
+        if (!range) continue;
+        asked.push(lookUpPath(found, id).then((place) => {
+          if (!place) return;
+          links.push({
+            range,
+            text: found,
+            decorations: { pointerCursor: true, underline: true },
+            activate: () => window.dispatchEvent(new CustomEvent('station:open-path', { detail: place })),
+          });
+        }));
+      }
+      Promise.all(asked).then(() => callback(links.length ? links : undefined));
     },
   };
 }

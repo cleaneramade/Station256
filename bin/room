@@ -390,6 +390,10 @@ EOF
       allow) cat <<EOF
 This room can read and change them: \`/home/dev/Downloads\`, \`/home/dev/Documents\` and so on.
 For example, \`$win_home\Downloads\photo.png\` is \`/home/dev/Downloads/photo.png\`.
+Save what you make there: documents in \`/home/dev/Documents\`, pictures in
+\`/home/dev/Pictures\`, videos in \`/home/dev/Videos\`, music and audio in \`/home/dev/Music\`, and
+other downloads in \`/home/dev/Downloads\`. These are the user's real folders, so don't delete or
+overwrite their files unless they ask.
 EOF
       ;;
       *) cat <<EOF
@@ -430,6 +434,10 @@ EOF
 Start a site on a port of 1024 or higher and print its full link, like http://localhost:3000.
 Station 256 opens the same port on Windows, so that link works in the user's Windows browser.
 
+Don't open new Herdr tabs, panes or workspaces in this terminal (no \`herdr tab\`, \`pane\` or
+\`workspace\` create or split). To keep a site running, start it in the background, like
+\`setsid -f COMMAND > /tmp/NAME.log 2>&1\`, or ask the user to press Preview in Station 256.
+
 ## The Web Browser
 
 \`station-browser\` uses Station 256's Web Browser while the user watches: \`station-browser open
@@ -464,6 +472,14 @@ room_guide_copies() {
     && cp /etc/station-256/room-guide.md "$HOME/.codex/AGENTS.md" \
     && cp /etc/station-256/room-guide.md "$HOME/.gemini/GEMINI.md"' >/dev/null 2>>"$LOG" \
     || log "$name: the room note wasn't handed to Codex and Gemini"
+}
+
+# Station 256's own Jev key (the house's ~/.advisor-station, never the Windows one) goes to
+# the room, where the Advisor Station skill reads it. Rooms start fresh, so it's handed over each start.
+room_jev_key() {
+  local name="$1" id="$2" key="$HOME/.advisor-station/jev-key.txt"
+  [ -s "$key" ] || return 0
+  docker exec -i "room-$id" sh -c 'umask 077; mkdir -p "$HOME/.advisor-station" && cat > "$HOME/.advisor-station/jev-key.txt"'     <"$key" 2>>"$LOG" || log "$name: the Jev key wasn't handed to the room"
 }
 
 # Starts the room and confirms it stayed up. Tries again if it didn't.
@@ -584,6 +600,7 @@ start_room() {
     if is_up "$name"; then
       [ "$attempt" = 1 ] || log "$name: room came up on attempt $attempt"
       if [ -n "$guide" ]; then room_guide_copies "$name" "$id"; fi
+      room_jev_key "$name" "$id"
       return 0
     fi
     log "$name: room stopped on attempt $attempt: $(docker inspect -f 'exit={{.State.ExitCode}} oom={{.State.OOMKilled}} err={{.State.Error}}' "room-$id" 2>&1)"
